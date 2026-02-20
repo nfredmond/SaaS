@@ -4,6 +4,7 @@ import { readReports } from "@/lib/reportStore";
 
 export async function GET() {
   return NextResponse.json({
+    schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     runs: readRuns(),
     reports: readReports(),
