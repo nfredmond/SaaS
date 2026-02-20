@@ -103,6 +103,7 @@ export default function Home() {
   const [isReportsLoading, setIsReportsLoading] = useState(true);
   const [showReport, setShowReport] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [compareRunId, setCompareRunId] = useState<string | null>(null);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle");
   const [reportStatus, setReportStatus] = useState<"idle" | "ready">("idle");
@@ -161,6 +162,27 @@ export default function Home() {
     () => runHistory.find((run) => run.id === selectedRunId) ?? null,
     [runHistory, selectedRunId]
   );
+  const compareRun = useMemo(
+    () => runHistory.find((run) => run.id === compareRunId) ?? null,
+    [runHistory, compareRunId]
+  );
+  const comparedMetrics = useMemo(() => {
+    if (!selectedRun || !compareRun) return [];
+
+    const baseByName = new Map(compareRun.metrics.map((metric) => [metric.name, metric]));
+    return selectedRun.metrics.map((metric) => {
+      const baseline = baseByName.get(metric.name);
+      if (!baseline) {
+        return { metric, baseline: null, delta: null as number | null };
+      }
+
+      return {
+        metric,
+        baseline,
+        delta: metric.value - baseline.value,
+      };
+    });
+  }, [compareRun, selectedRun]);
   const selectedReport = useMemo(
     () => reportHistory.find((report) => report.id === selectedReportId) ?? null,
     [reportHistory, selectedReportId]
@@ -283,6 +305,24 @@ export default function Home() {
     void loadReports();
   }, [loadReports]);
 
+  useEffect(() => {
+    if (!selectedRun) {
+      if (compareRunId !== null) {
+        setCompareRunId(null);
+      }
+      return;
+    }
+
+    const isValidCompareRun = runHistory.some(
+      (run) => run.id === compareRunId && run.id !== selectedRun.id
+    );
+
+    if (isValidCompareRun) return;
+
+    const fallback = runHistory.find((run) => run.id !== selectedRun.id);
+    setCompareRunId(fallback?.id ?? null);
+  }, [compareRunId, runHistory, selectedRun]);
+
   const handleBoundaryUpload = async (file: File | null) => {
     setBoundaryFile(file);
     if (!file) {
@@ -355,6 +395,35 @@ export default function Home() {
     localSummary,
     template: reportTemplate,
   });
+
+  const formatMetricValue = (metric: Metric) =>
+    metric.unit === "ratio"
+      ? `${Math.round(metric.value * 100)}%`
+      : metric.value.toLocaleString();
+
+  const formatMetricDelta = (metric: Metric, delta: number | null) => {
+    if (delta === null) return "No baseline";
+    if (metric.unit === "ratio") {
+      const sign = delta > 0 ? "+" : "";
+      return `${sign}${(delta * 100).toFixed(1)} pts`;
+    }
+
+    const sign = delta > 0 ? "+" : "";
+    return `${sign}${delta.toLocaleString()}`;
+  };
+
+  const handleLoadRunSnapshot = (run: RunEntry) => {
+    setQuery(run.query);
+    setMetrics(run.metrics);
+    setLayers(run.layers);
+    setNotes(run.notes ?? []);
+    setLocalSummary(run.localSummary ?? null);
+    setLastRunId(run.id);
+    setLastRunAt(run.createdAt);
+    setAnalysisStatus("complete");
+    setReportStatus("ready");
+    pushToast("info", "Run snapshot loaded into workspace.");
+  };
 
   const handleShare = async () => {
     try {
@@ -1254,12 +1323,20 @@ export default function Home() {
                       {new Date(selectedRun.createdAt).toLocaleString()}
                     </p>
                   </div>
-                  <button
-                    className="rounded-full border border-rose-400/40 px-3 py-1 text-xs text-rose-200 transition hover:border-rose-300"
-                    onClick={() => setConfirmAction({ kind: "delete-run", runId: selectedRun.id })}
-                  >
-                    Delete
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="rounded-full border border-neutral-700 px-3 py-1 text-xs text-neutral-200 transition hover:border-neutral-500"
+                      onClick={() => handleLoadRunSnapshot(selectedRun)}
+                    >
+                      Load Snapshot
+                    </button>
+                    <button
+                      className="rounded-full border border-rose-400/40 px-3 py-1 text-xs text-rose-200 transition hover:border-rose-300"
+                      onClick={() => setConfirmAction({ kind: "delete-run", runId: selectedRun.id })}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3">
                   {selectedRun.metrics.map((metric) => (
@@ -1271,12 +1348,64 @@ export default function Home() {
                         {metric.name}
                       </p>
                       <p className="text-base font-semibold text-neutral-100">
-                        {metric.unit === "ratio"
-                          ? `${Math.round(metric.value * 100)}%`
-                          : metric.value.toLocaleString()}
+                        {formatMetricValue(metric)}
                       </p>
                     </div>
                   ))}
+                </div>
+                <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Run Comparison</p>
+                  {runHistory.length > 1 ? (
+                    <div className="mt-2 space-y-3">
+                      <select
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs text-neutral-200"
+                        value={compareRunId ?? ""}
+                        onChange={(event) => setCompareRunId(event.target.value || null)}
+                      >
+                        {runHistory
+                          .filter((run) => run.id !== selectedRun.id)
+                          .map((run) => (
+                            <option key={run.id} value={run.id}>
+                              {new Date(run.createdAt).toLocaleString()} - {run.query}
+                            </option>
+                          ))}
+                      </select>
+                      {compareRun ? (
+                        <div className="space-y-2">
+                          {comparedMetrics.map(({ metric, baseline, delta }) => (
+                            <div
+                              key={metric.name}
+                              className="flex items-center justify-between rounded-lg border border-neutral-800 px-2 py-1"
+                            >
+                              <span className="text-xs text-neutral-400">{metric.name}</span>
+                              <span className="text-xs text-neutral-200">
+                                {formatMetricValue(metric)}
+                                {baseline ? ` vs ${formatMetricValue(baseline)}` : ""}
+                                {"  "}
+                                <span
+                                  className={
+                                    delta === null
+                                      ? "text-neutral-500"
+                                      : delta > 0
+                                        ? "text-emerald-300"
+                                        : delta < 0
+                                          ? "text-rose-300"
+                                          : "text-neutral-400"
+                                  }
+                                >
+                                  ({formatMetricDelta(metric, delta)})
+                                </span>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-neutral-500">Select a baseline run.</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-neutral-500">Need at least 2 runs to compare metrics.</p>
+                  )}
                 </div>
                 {selectedRun.notes?.length ? (
                   <div className="space-y-1 text-xs text-neutral-400">
