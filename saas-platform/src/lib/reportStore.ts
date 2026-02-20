@@ -34,3 +34,8 @@ export function appendReport(report: ReportRecord): ReportRecord[] {
   fs.writeFileSync(REPORTS_PATH, JSON.stringify(updated, null, 2));
   return updated;
 }
+
+export function getReportById(id: string): ReportRecord | null {
+  const current = readReports();
+  return current.find((report) => report.id === id) ?? null;
+}

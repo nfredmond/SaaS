@@ -72,6 +72,8 @@ export default function Home() {
   const [reportDownloadStatus, setReportDownloadStatus] = useState<"idle" | "loading" | "error">(
     "idle"
   );
+  const [reportRedownloadId, setReportRedownloadId] = useState<string | null>(null);
+  const [reportRedownloadError, setReportRedownloadError] = useState<string | null>(null);
 
   const jobsMetric = metrics.find((metric) => metric.name === "jobs_30min");
   const hinMetric = metrics.find((metric) => metric.name === "hin_corridors");
@@ -306,6 +308,34 @@ export default function Home() {
     setLastRunAt(null);
   };
 
+  const handleRedownloadReport = async (report: ReportRecord) => {
+    setReportRedownloadError(null);
+    setReportRedownloadId(report.id);
+
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(report.id)}/download`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error ?? "Unable to re-download report.");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = report.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      setReportRedownloadError(error instanceof Error ? error.message : "Unable to re-download report.");
+      setTimeout(() => setReportRedownloadError(null), 2800);
+    } finally {
+      setReportRedownloadId(null);
+    }
+  };
+
   return (
     <div className="min-h-screen text-neutral-50 app-shell">
       <header className="border-b border-neutral-800/80 bg-neutral-950/70 backdrop-blur">
@@ -478,6 +508,9 @@ export default function Home() {
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
             <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Recent Reports</p>
             <div className="mt-4 space-y-3 text-sm text-neutral-300">
+              {reportRedownloadError ? (
+                <p className="text-xs text-rose-300">{reportRedownloadError}</p>
+              ) : null}
               {isReportsLoading ? (
                 <p className="text-xs text-neutral-500">Loading reports...</p>
               ) : reportHistory.length === 0 ? (
@@ -498,6 +531,13 @@ export default function Home() {
                     </div>
                     <p className="mt-1 truncate font-semibold text-neutral-100">{report.fileName}</p>
                     <p className="text-xs text-neutral-500">{report.query}</p>
+                    <button
+                      className="mt-2 rounded-full border border-neutral-700 px-3 py-1 text-xs text-neutral-200 transition hover:border-neutral-500 disabled:opacity-70"
+                      onClick={() => handleRedownloadReport(report)}
+                      disabled={reportRedownloadId === report.id}
+                    >
+                      {reportRedownloadId === report.id ? "Rebuilding..." : "Re-download"}
+                    </button>
                   </div>
                 ))
               )}
