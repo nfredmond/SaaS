@@ -89,6 +89,9 @@ export default function Home() {
     corridor: true,
   });
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle");
 
   const jobsMetric = metrics.find((metric) => metric.name === "jobs_30min");
   const hinMetric = metrics.find((metric) => metric.name === "hin_corridors");
@@ -114,6 +117,11 @@ export default function Home() {
     return lines;
   }, [jobsMetric, hinMetric, equityMetric]);
 
+  const selectedRun = useMemo(
+    () => runHistory.find((run) => run.id === selectedRunId) ?? null,
+    [runHistory, selectedRunId]
+  );
+
   useEffect(() => {
     if (hasHydrated) return;
     if (typeof window === "undefined") return;
@@ -125,6 +133,7 @@ export default function Home() {
       if (parsed[0]) {
         setLastRunId(parsed[0].id);
         setLastRunAt(parsed[0].createdAt);
+        setSelectedRunId(parsed[0].id);
       }
     }
 
@@ -151,7 +160,7 @@ export default function Home() {
         `Loaded boundary file: ${file.name}`,
         ...prev.filter((note) => !note.startsWith("Loaded boundary file")),
       ]);
-    } catch (error) {
+    } catch {
       setBoundary(null);
       setNotes(["Invalid GeoJSON file. Please upload a Feature with Polygon geometry."]);
     }
@@ -194,9 +203,22 @@ export default function Home() {
         },
         ...prev,
       ]);
+      setSelectedRunId(runId);
       setAnalysisStatus("complete");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleShare = async () => {
+    try {
+      if (typeof window === "undefined") return;
+      await navigator.clipboard.writeText(window.location.href);
+      setShareStatus("copied");
+      setTimeout(() => setShareStatus("idle"), 2000);
+    } catch {
+      setShareStatus("error");
+      setTimeout(() => setShareStatus("idle"), 2000);
     }
   };
 
@@ -217,7 +239,10 @@ export default function Home() {
             <div className="rounded-full border border-neutral-700/70 bg-neutral-900/60 px-4 py-2 text-xs uppercase tracking-[0.2em] text-neutral-300">
               Status: {analysisStatus}
             </div>
-            <button className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-200 transition hover:border-neutral-500">
+            <button
+              className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-200 transition hover:border-neutral-500"
+              onClick={() => setShowReport(true)}
+            >
               Export Report
             </button>
           </div>
@@ -340,19 +365,29 @@ export default function Home() {
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
             <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Run History</p>
             <div className="mt-4 space-y-3 text-sm text-neutral-300">
-              {runHistory.length === 0 ? (
-                <p className="text-xs text-neutral-500">No runs yet.</p>
-              ) : (
-                runHistory.slice(0, 4).map((run) => (
-                  <div key={run.id} className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
-                    <p className="text-xs text-neutral-500">{new Date(run.createdAt).toLocaleString()}</p>
-                    <p className="font-semibold text-neutral-100">{run.query}</p>
-                    {run.notes?.[0] ? (
-                      <p className="text-xs text-neutral-500">{run.notes[0]}</p>
-                    ) : null}
-                  </div>
-                ))
-              )}
+                {runHistory.length === 0 ? (
+                  <p className="text-xs text-neutral-500">No runs yet.</p>
+                ) : (
+                  runHistory.slice(0, 4).map((run) => (
+                    <button
+                      key={run.id}
+                      className={`w-full rounded-xl border p-3 text-left transition ${
+                        selectedRunId === run.id
+                          ? "border-emerald-400/60 bg-emerald-400/10"
+                          : "border-neutral-800 bg-neutral-950 hover:border-neutral-600"
+                      }`}
+                      onClick={() => setSelectedRunId(run.id)}
+                    >
+                      <p className="text-xs text-neutral-500">
+                        {new Date(run.createdAt).toLocaleString()}
+                      </p>
+                      <p className="font-semibold text-neutral-100">{run.query}</p>
+                      {run.notes?.[0] ? (
+                        <p className="text-xs text-neutral-500">{run.notes[0]}</p>
+                      ) : null}
+                    </button>
+                  ))
+                )}
             </div>
           </div>
         </section>
@@ -365,10 +400,16 @@ export default function Home() {
                 <h2 className="font-display text-xl text-white">Corridor View</h2>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-sm">
-                <button className="rounded-full border border-neutral-700 px-4 py-2 text-neutral-200 transition hover:border-neutral-500">
+                <button
+                  className="rounded-full border border-neutral-700 px-4 py-2 text-neutral-200 transition hover:border-neutral-500"
+                  onClick={handleShare}
+                >
                   Share Link
                 </button>
-                <button className="rounded-full bg-emerald-400/90 px-4 py-2 font-semibold text-neutral-900 transition hover:bg-emerald-300">
+                <button
+                  className="rounded-full bg-emerald-400/90 px-4 py-2 font-semibold text-neutral-900 transition hover:bg-emerald-300"
+                  onClick={() => setShowReport(true)}
+                >
                   Generate Brief
                 </button>
               </div>
@@ -380,6 +421,13 @@ export default function Home() {
                 showCrashPoints={mapLayers.crashPoints}
                 showJobHexes={mapLayers.jobHexes}
               />
+              {shareStatus !== "idle" ? (
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 rounded-full border border-neutral-800 bg-neutral-950/90 px-4 py-2 text-xs text-neutral-200 shadow-lg">
+                  {shareStatus === "copied"
+                    ? "Link copied to clipboard."
+                    : "Unable to copy link."}
+                </div>
+              ) : null}
               <div className="absolute bottom-4 left-4 space-y-2 rounded-2xl border border-neutral-800 bg-neutral-950/80 p-4 text-xs text-neutral-200 shadow-lg">
                 <p className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">Legend</p>
                 {mapLayers.crashPoints ? (
@@ -478,8 +526,114 @@ export default function Home() {
               </div>
             </div>
           </div>
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Selected Run</p>
+            {selectedRun ? (
+              <div className="mt-3 space-y-3 text-sm text-neutral-300">
+                <div>
+                  <p className="text-xs text-neutral-500">Query</p>
+                  <p className="font-semibold text-neutral-100">{selectedRun.query}</p>
+                  <p className="text-xs text-neutral-500">
+                    {new Date(selectedRun.createdAt).toLocaleString()}
+                  </p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {selectedRun.metrics.map((metric) => (
+                    <div
+                      key={metric.name}
+                      className="rounded-xl border border-neutral-800 bg-neutral-950 px-3 py-2"
+                    >
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">
+                        {metric.name}
+                      </p>
+                      <p className="text-base font-semibold text-neutral-100">
+                        {metric.unit === "ratio"
+                          ? `${Math.round(metric.value * 100)}%`
+                          : metric.value.toLocaleString()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                {selectedRun.notes?.length ? (
+                  <div className="space-y-1 text-xs text-neutral-400">
+                    {selectedRun.notes.map((note) => (
+                      <p key={note}>{note}</p>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-neutral-500">Select a run to inspect details.</p>
+            )}
+          </div>
         </section>
       </main>
+
+      {showReport ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-neutral-950/80 p-6">
+          <div className="w-full max-w-3xl rounded-3xl border border-neutral-800 bg-neutral-900/95 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">Report Preview</p>
+                <h2 className="font-display text-2xl text-white">FHWA-Ready Corridor Brief</h2>
+                <p className="text-sm text-neutral-400">
+                  Drafted from the latest analytics snapshot.
+                </p>
+              </div>
+              <button
+                className="rounded-full border border-neutral-700 px-3 py-1 text-xs text-neutral-300"
+                onClick={() => setShowReport(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-950/80 p-4 text-sm text-neutral-300">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">
+                  Executive Summary
+                </p>
+                <p className="mt-2">
+                  This corridor experiences elevated safety risk and moderate job access gaps relative to
+                  peer rural corridors. The analysis highlights priority segments for investment and
+                  equity-focused interventions.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-950/80 p-4 text-sm text-neutral-300">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">Key Findings</p>
+                <ul className="mt-2 space-y-2 text-sm">
+                  {insightLines.length ? (
+                    insightLines.map((line) => <li key={line}>{line}</li>)
+                  ) : (
+                    <li>Run an analysis to populate corridor findings.</li>
+                  )}
+                </ul>
+              </div>
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-950/80 p-4 text-sm text-neutral-300">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">Equity Notes</p>
+                <p className="mt-2">
+                  Equity gap indicators suggest targeted improvements near lower-income clusters. Prioritize
+                  safe crossings and access to essential services.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-950/80 p-4 text-sm text-neutral-300">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">Safety Notes</p>
+                <p className="mt-2">
+                  High injury network segments align with crash clusters near the school corridor.
+                  Recommend speed management and visibility upgrades.
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-neutral-500">
+                Data sources: ACS 5-year, LODES, FARS, local boundary uploads.
+              </div>
+              <button className="rounded-full bg-emerald-400/90 px-4 py-2 text-sm font-semibold text-neutral-900">
+                Download PDF (placeholder)
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
