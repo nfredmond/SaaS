@@ -2,28 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import MapView from "@/components/MapView";
-
-type Metric = {
-  name: string;
-  value: number;
-  unit: string;
-};
-
-type Layer = {
-  name: string;
-  type: string;
-};
+import type { Layer, Metric, ReportPayload } from "@/lib/reportSchema";
 
 type ApiResponse = {
   metrics: Metric[];
   layers: Layer[];
   notes?: string[];
-  localSummary?: {
-    boundaryType?: string;
-    bbox?: { minX: number; minY: number; maxX: number; maxY: number } | null;
-    centroid?: { lon: number; lat: number } | null;
-    generatedAt?: string;
-  } | null;
+  localSummary?: ReportPayload["localSummary"];
   runId?: string;
 };
 
@@ -42,16 +27,6 @@ type RunEntry = {
   createdAt: string;
   metrics: Metric[];
   notes?: string[];
-};
-
-type ReportPayload = {
-  generatedAt: string;
-  query: string;
-  metrics: Metric[];
-  notes: string[];
-  layers: Layer[];
-  localSummary: ApiResponse["localSummary"];
-  template: "corridor" | "ss4a";
 };
 
 const PRESETS = [
@@ -104,6 +79,9 @@ export default function Home() {
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle");
   const [reportStatus, setReportStatus] = useState<"idle" | "ready">("idle");
   const [reportTemplate, setReportTemplate] = useState<"corridor" | "ss4a">("corridor");
+  const [reportDownloadStatus, setReportDownloadStatus] = useState<"idle" | "loading" | "error">(
+    "idle"
+  );
 
   const jobsMetric = metrics.find((metric) => metric.name === "jobs_30min");
   const hinMetric = metrics.find((metric) => metric.name === "hin_corridors");
@@ -245,11 +223,37 @@ export default function Home() {
     }
   };
 
-  const handleDownloadReport = () => {
+  const handleDownloadReport = async () => {
     if (typeof window === "undefined") return;
     const payload = buildReportPayload();
     window.localStorage.setItem("rural-atlas-report", JSON.stringify(payload));
-    window.open("/report", "_blank", "noopener,noreferrer");
+    setReportDownloadStatus("loading");
+
+    try {
+      const response = await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error("PDF generation failed");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `rural-atlas-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setReportDownloadStatus("idle");
+    } catch {
+      setReportDownloadStatus("error");
+      setTimeout(() => setReportDownloadStatus("idle"), 2500);
+    }
   };
 
   return (
@@ -695,12 +699,18 @@ export default function Home() {
               <div className="text-xs text-neutral-500">
                 Data sources: ACS 5-year, LODES, FARS, local boundary uploads.
               </div>
-              <button
-                className="rounded-full bg-emerald-400/90 px-4 py-2 text-sm font-semibold text-neutral-900"
-                onClick={handleDownloadReport}
-              >
-                Download PDF
-              </button>
+              <div className="flex items-center gap-3">
+                {reportDownloadStatus === "error" ? (
+                  <span className="text-xs text-rose-300">PDF generation failed.</span>
+                ) : null}
+                <button
+                  className="rounded-full bg-emerald-400/90 px-4 py-2 text-sm font-semibold text-neutral-900 disabled:opacity-70"
+                  onClick={handleDownloadReport}
+                  disabled={reportDownloadStatus === "loading"}
+                >
+                  {reportDownloadStatus === "loading" ? "Building PDF..." : "Download PDF"}
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -1,32 +1,7 @@
 "use client";
 
 import { useState } from "react";
-
-type Metric = {
-  name: string;
-  value: number;
-  unit: string;
-};
-
-type Layer = {
-  name: string;
-  type: string;
-};
-
-type ReportPayload = {
-  generatedAt: string;
-  query: string;
-  metrics: Metric[];
-  notes: string[];
-  layers: Layer[];
-  template: "corridor" | "ss4a";
-  localSummary?: {
-    boundaryType?: string;
-    bbox?: { minX: number; minY: number; maxX: number; maxY: number } | null;
-    centroid?: { lon: number; lat: number } | null;
-    generatedAt?: string;
-  } | null;
-};
+import type { ReportPayload } from "@/lib/reportSchema";
 
 export default function ReportPage() {
   const [payload] = useState<ReportPayload | null>(() => {
