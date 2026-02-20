@@ -23,3 +23,13 @@ export type ReportPayload = {
   } | null;
   template: "corridor" | "ss4a";
 };
+
+export type AnalysisRun = {
+  id: string;
+  query: string;
+  createdAt: string;
+  metrics: Metric[];
+  layers: Layer[];
+  notes?: string[];
+  localSummary?: ReportPayload["localSummary"];
+};

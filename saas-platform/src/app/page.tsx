@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import MapView from "@/components/MapView";
-import type { Layer, Metric, ReportPayload } from "@/lib/reportSchema";
+import type { AnalysisRun, Layer, Metric, ReportPayload } from "@/lib/reportSchema";
+import type { Feature, GeoJsonProperties, MultiPolygon, Polygon } from "geojson";
 
 type ApiResponse = {
   metrics: Metric[];
@@ -12,22 +13,9 @@ type ApiResponse = {
   runId?: string;
 };
 
-type GeoJsonFeature = {
-  type: "Feature";
-  geometry: {
-    type: "Polygon" | "MultiPolygon";
-    coordinates: unknown;
-  };
-  properties?: Record<string, unknown>;
-};
+type GeoJsonFeature = Feature<Polygon | MultiPolygon, GeoJsonProperties>;
 
-type RunEntry = {
-  id: string;
-  query: string;
-  createdAt: string;
-  metrics: Metric[];
-  notes?: string[];
-};
+type RunEntry = AnalysisRun;
 
 const PRESETS = [
   {
@@ -73,7 +61,7 @@ export default function Home() {
     jobHexes: true,
     corridor: true,
   });
-  const [hasHydrated, setHasHydrated] = useState(false);
+  const [isRunsLoading, setIsRunsLoading] = useState(true);
   const [showReport, setShowReport] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle");
@@ -113,27 +101,31 @@ export default function Home() {
   );
 
   useEffect(() => {
-    if (hasHydrated) return;
-    if (typeof window === "undefined") return;
+    let active = true;
 
-    const stored = window.localStorage.getItem("rural-atlas-runs");
-    if (stored) {
-      const parsed = JSON.parse(stored) as RunEntry[];
-      setRunHistory(parsed);
-      if (parsed[0]) {
-        setLastRunId(parsed[0].id);
-        setLastRunAt(parsed[0].createdAt);
-        setSelectedRunId(parsed[0].id);
+    async function loadRuns() {
+      setIsRunsLoading(true);
+      try {
+        const response = await fetch("/api/runs", { cache: "no-store" });
+        const payload = await response.json();
+        const runs = (payload?.runs ?? []) as RunEntry[];
+        if (!active) return;
+        setRunHistory(runs);
+        if (runs[0]) {
+          setLastRunId(runs[0].id);
+          setLastRunAt(runs[0].createdAt);
+          setSelectedRunId((prev) => prev ?? runs[0].id);
+        }
+      } finally {
+        if (active) setIsRunsLoading(false);
       }
     }
 
-    setHasHydrated(true);
-  }, [hasHydrated]);
-
-  useEffect(() => {
-    if (!hasHydrated) return;
-    window.localStorage.setItem("rural-atlas-runs", JSON.stringify(runHistory.slice(0, 12)));
-  }, [hasHydrated, runHistory]);
+    loadRuns();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleBoundaryUpload = async (file: File | null) => {
     setBoundaryFile(file);
@@ -176,20 +168,25 @@ export default function Home() {
       const runId = data.runId ?? crypto.randomUUID();
       const runTime = new Date().toISOString();
       const runNotes = data.notes ?? [];
+      const runLayers = data.layers ?? [];
+      const runLocalSummary = data.localSummary ?? null;
+      const runQuery = query.trim() || "Untitled run";
 
       setMetrics(data.metrics ?? []);
-      setLayers(data.layers ?? []);
+      setLayers(runLayers);
       setNotes(runNotes);
-      setLocalSummary(data.localSummary ?? null);
+      setLocalSummary(runLocalSummary);
       setLastRunId(runId);
       setLastRunAt(runTime);
       setRunHistory((prev) => [
         {
           id: runId,
-          query: query || "Untitled run",
+          query: runQuery,
           createdAt: runTime,
           metrics: data.metrics ?? [],
+          layers: runLayers,
           notes: runNotes,
+          localSummary: runLocalSummary,
         },
         ...prev,
       ]);
@@ -399,29 +396,29 @@ export default function Home() {
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
             <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Run History</p>
             <div className="mt-4 space-y-3 text-sm text-neutral-300">
-                {runHistory.length === 0 ? (
-                  <p className="text-xs text-neutral-500">No runs yet.</p>
-                ) : (
-                  runHistory.slice(0, 4).map((run) => (
-                    <button
-                      key={run.id}
-                      className={`w-full rounded-xl border p-3 text-left transition ${
-                        selectedRunId === run.id
-                          ? "border-emerald-400/60 bg-emerald-400/10"
-                          : "border-neutral-800 bg-neutral-950 hover:border-neutral-600"
-                      }`}
-                      onClick={() => setSelectedRunId(run.id)}
-                    >
-                      <p className="text-xs text-neutral-500">
-                        {new Date(run.createdAt).toLocaleString()}
-                      </p>
-                      <p className="font-semibold text-neutral-100">{run.query}</p>
-                      {run.notes?.[0] ? (
-                        <p className="text-xs text-neutral-500">{run.notes[0]}</p>
-                      ) : null}
-                    </button>
-                  ))
-                )}
+              {isRunsLoading ? (
+                <p className="text-xs text-neutral-500">Loading runs...</p>
+              ) : runHistory.length === 0 ? (
+                <p className="text-xs text-neutral-500">No runs yet.</p>
+              ) : (
+                runHistory.slice(0, 6).map((run) => (
+                  <button
+                    key={run.id}
+                    className={`w-full rounded-xl border p-3 text-left transition ${
+                      selectedRunId === run.id
+                        ? "border-emerald-400/60 bg-emerald-400/10"
+                        : "border-neutral-800 bg-neutral-950 hover:border-neutral-600"
+                    }`}
+                    onClick={() => setSelectedRunId(run.id)}
+                  >
+                    <p className="text-xs text-neutral-500">
+                      {new Date(run.createdAt).toLocaleString()}
+                    </p>
+                    <p className="font-semibold text-neutral-100">{run.query}</p>
+                    {run.notes?.[0] ? <p className="text-xs text-neutral-500">{run.notes[0]}</p> : null}
+                  </button>
+                ))
+              )}
             </div>
           </div>
         </section>

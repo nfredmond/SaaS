@@ -60,8 +60,4 @@ body {
   .app-shell {
     background: #ffffff !important;
   }
-
-  .print\\:hidden {
-    display: none !important;
-  }
 }

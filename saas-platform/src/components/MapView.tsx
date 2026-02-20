@@ -5,6 +5,7 @@ import maplibregl, { Map } from "maplibre-gl";
 import bbox from "@turf/bbox";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
+import type { Feature, GeoJsonProperties, MultiPolygon, Polygon } from "geojson";
 
 const DEMO_STYLE = "https://demotiles.maplibre.org/style.json";
 
@@ -19,14 +20,7 @@ const SAMPLE_POINTS: SamplePoint[] = [
   { name: "Clinic", coords: [-97.7309, 30.2602] },
 ];
 
-type GeoJsonFeature = {
-  type: "Feature";
-  geometry: {
-    type: "Polygon" | "MultiPolygon";
-    coordinates: unknown;
-  };
-  properties?: Record<string, unknown>;
-};
+type GeoJsonFeature = Feature<Polygon | MultiPolygon, GeoJsonProperties>;
 
 type MapViewProps = {
   boundary?: GeoJsonFeature | null;
@@ -119,10 +113,7 @@ export default function MapView({
       data: demoHexes,
       filled: true,
       stroked: true,
-      getFillColor: (d: DemoHexFeature) => {
-        const intensity = d.properties?.intensity ?? 0.2;
-        return [255, 107, 107, Math.round(60 + intensity * 140)];
-      },
+      getFillColor: [255, 107, 107],
       getLineColor: [255, 255, 255, 120],
       getLineWidth: 1,
       lineWidthMinPixels: 1,

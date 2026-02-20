@@ -181,7 +181,8 @@ export async function POST(request: Request) {
   );
 
   const buffer = await renderToBuffer(pdf);
-  return new NextResponse(buffer, {
+  const bytes = new Uint8Array(buffer);
+  return new NextResponse(bytes, {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="rural-atlas-report-${new Date()
