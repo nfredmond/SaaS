@@ -17,6 +17,12 @@ type GeoJsonFeature = Feature<Polygon | MultiPolygon, GeoJsonProperties>;
 
 type RunEntry = AnalysisRun;
 
+type ConfirmAction =
+  | { kind: "delete-run"; runId: string }
+  | { kind: "clear-runs" }
+  | { kind: "delete-report"; report: ReportRecord }
+  | { kind: "clear-reports" };
+
 const PRESETS = [
   {
     title: "Safety Hotspots",
@@ -83,6 +89,16 @@ export default function Home() {
   const [restoreStatus, setRestoreStatus] = useState<"idle" | "restoring" | "error">("idle");
   const [restoreMode, setRestoreMode] = useState<"replace" | "merge">("replace");
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
+  const [lastBackupCounts, setLastBackupCounts] = useState<{ runs: number; reports: number } | null>(
+    null
+  );
+  const [lastRestoreAt, setLastRestoreAt] = useState<string | null>(null);
+  const [lastRestoreCounts, setLastRestoreCounts] = useState<{ runs: number; reports: number } | null>(
+    null
+  );
   const backupInputRef = useRef<HTMLInputElement | null>(null);
 
   const jobsMetric = metrics.find((metric) => metric.name === "jobs_30min");
@@ -117,6 +133,38 @@ export default function Home() {
     () => reportHistory.find((report) => report.id === selectedReportId) ?? null,
     [reportHistory, selectedReportId]
   );
+  const confirmCopy = useMemo(() => {
+    if (!confirmAction) return null;
+
+    switch (confirmAction.kind) {
+      case "delete-run":
+        return {
+          title: "Delete Run",
+          description: "This removes the selected run from persistent history.",
+          actionLabel: "Delete",
+        };
+      case "clear-runs":
+        return {
+          title: "Clear Run History",
+          description: "This removes all persisted runs. This cannot be undone.",
+          actionLabel: "Clear All",
+        };
+      case "delete-report":
+        return {
+          title: "Delete Report",
+          description: `Delete report "${confirmAction.report.fileName}" from history.`,
+          actionLabel: "Delete",
+        };
+      case "clear-reports":
+        return {
+          title: "Clear Report History",
+          description: "This removes all persisted reports. This cannot be undone.",
+          actionLabel: "Clear All",
+        };
+      default:
+        return null;
+    }
+  }, [confirmAction]);
 
   useEffect(() => {
     let active = true;
@@ -304,10 +352,8 @@ export default function Home() {
     }
   };
 
-  const handleDeleteSelectedRun = async () => {
-    if (!selectedRunId) return;
-
-    const response = await fetch(`/api/runs?id=${encodeURIComponent(selectedRunId)}`, {
+  const handleDeleteRun = async (runId: string) => {
+    const response = await fetch(`/api/runs?id=${encodeURIComponent(runId)}`, {
       method: "DELETE",
     });
 
@@ -426,6 +472,31 @@ export default function Home() {
     }
   };
 
+  const handleConfirmAction = async () => {
+    if (!confirmAction) return;
+    setConfirmBusy(true);
+
+    try {
+      switch (confirmAction.kind) {
+        case "delete-run":
+          await handleDeleteRun(confirmAction.runId);
+          break;
+        case "clear-runs":
+          await handleClearRunHistory();
+          break;
+        case "delete-report":
+          await handleDeleteReport(confirmAction.report);
+          break;
+        case "clear-reports":
+          await handleClearReportHistory();
+          break;
+      }
+    } finally {
+      setConfirmBusy(false);
+      setConfirmAction(null);
+    }
+  };
+
   const handleExportBackup = async () => {
     setBackupStatus("exporting");
     try {
@@ -445,6 +516,11 @@ export default function Home() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
+      setLastBackupAt(payload.generatedAt ?? new Date().toISOString());
+      setLastBackupCounts({
+        runs: Array.isArray(payload.runs) ? payload.runs.length : 0,
+        reports: Array.isArray(payload.reports) ? payload.reports.length : 0,
+      });
       setBackupStatus("idle");
     } catch {
       setBackupStatus("error");
@@ -500,6 +576,11 @@ export default function Home() {
       }
 
       setSelectedReportId(reports[0]?.id ?? null);
+      setLastRestoreAt(payload.restoredAt ?? new Date().toISOString());
+      setLastRestoreCounts({
+        runs: typeof payload.runCount === "number" ? payload.runCount : runs.length,
+        reports: typeof payload.reportCount === "number" ? payload.reportCount : reports.length,
+      });
       setRestoreStatus("idle");
     } catch (error) {
       setRestoreError(error instanceof Error ? error.message : "Unable to restore backup.");
@@ -687,7 +768,7 @@ export default function Home() {
               <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Run History</p>
               <button
                 className="rounded-full border border-neutral-700 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-neutral-300 transition hover:border-neutral-500 disabled:opacity-70"
-                onClick={handleClearRunHistory}
+                onClick={() => setConfirmAction({ kind: "clear-runs" })}
                 disabled={runClearStatus === "clearing" || runHistory.length === 0}
               >
                 {runClearStatus === "clearing" ? "Clearing..." : "Clear"}
@@ -725,7 +806,7 @@ export default function Home() {
               <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Recent Reports</p>
               <button
                 className="rounded-full border border-neutral-700 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-neutral-300 transition hover:border-neutral-500 disabled:opacity-70"
-                onClick={handleClearReportHistory}
+                onClick={() => setConfirmAction({ kind: "clear-reports" })}
                 disabled={reportClearStatus === "clearing" || reportHistory.length === 0}
               >
                 {reportClearStatus === "clearing" ? "Clearing..." : "Clear"}
@@ -791,7 +872,7 @@ export default function Home() {
                         className="rounded-full border border-rose-400/40 px-3 py-1 text-xs text-rose-200 transition hover:border-rose-300 disabled:opacity-70"
                         onClick={(event) => {
                           event.stopPropagation();
-                          handleDeleteReport(report);
+                          setConfirmAction({ kind: "delete-report", report });
                         }}
                         disabled={
                           reportDeleteId === report.id ||
@@ -805,6 +886,42 @@ export default function Home() {
                   </div>
                 ))
               )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Data Operations</p>
+            <div className="mt-3 space-y-3 text-xs text-neutral-400">
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                <p className="text-neutral-500">Last Backup</p>
+                <p>{lastBackupAt ? new Date(lastBackupAt).toLocaleString() : "Not yet exported"}</p>
+                <p>
+                  Runs: {lastBackupCounts?.runs ?? 0} | Reports: {lastBackupCounts?.reports ?? 0}
+                </p>
+              </div>
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                <p className="text-neutral-500">Last Restore</p>
+                <p>{lastRestoreAt ? new Date(lastRestoreAt).toLocaleString() : "No restore yet"}</p>
+                <p>
+                  Runs: {lastRestoreCounts?.runs ?? 0} | Reports: {lastRestoreCounts?.reports ?? 0}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className="rounded-full border border-neutral-700 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-neutral-200 transition hover:border-neutral-500 disabled:opacity-70"
+                  onClick={handleExportBackup}
+                  disabled={backupStatus === "exporting"}
+                >
+                  {backupStatus === "exporting" ? "Exporting..." : "Export"}
+                </button>
+                <button
+                  className="rounded-full border border-neutral-700 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-neutral-200 transition hover:border-neutral-500 disabled:opacity-70"
+                  onClick={handleRestoreButtonClick}
+                  disabled={restoreStatus === "restoring"}
+                >
+                  {restoreStatus === "restoring" ? "Restoring..." : "Restore"}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -847,7 +964,7 @@ export default function Home() {
                   </button>
                   <button
                     className="rounded-full border border-rose-400/40 px-3 py-1 text-xs text-rose-200 transition hover:border-rose-300 disabled:opacity-70"
-                    onClick={() => handleDeleteReport(selectedReport)}
+                    onClick={() => setConfirmAction({ kind: "delete-report", report: selectedReport })}
                     disabled={
                       reportDeleteId === selectedReport.id ||
                       reportRedownloadId === selectedReport.id ||
@@ -1012,7 +1129,7 @@ export default function Home() {
                   </div>
                   <button
                     className="rounded-full border border-rose-400/40 px-3 py-1 text-xs text-rose-200 transition hover:border-rose-300"
-                    onClick={handleDeleteSelectedRun}
+                    onClick={() => setConfirmAction({ kind: "delete-run", runId: selectedRun.id })}
                   >
                     Delete
                   </button>
@@ -1048,6 +1165,32 @@ export default function Home() {
           </div>
         </section>
       </main>
+
+      {confirmAction && confirmCopy ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/80 p-6">
+          <div className="w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-900 p-5 shadow-2xl">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Confirm Action</p>
+            <h3 className="mt-2 text-lg font-semibold text-neutral-100">{confirmCopy.title}</h3>
+            <p className="mt-2 text-sm text-neutral-400">{confirmCopy.description}</p>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                className="rounded-full border border-neutral-700 px-4 py-2 text-xs text-neutral-200 transition hover:border-neutral-500 disabled:opacity-70"
+                onClick={() => setConfirmAction(null)}
+                disabled={confirmBusy}
+              >
+                Cancel
+              </button>
+              <button
+                className="rounded-full border border-rose-400/50 bg-rose-400/10 px-4 py-2 text-xs text-rose-200 transition hover:border-rose-300 disabled:opacity-70"
+                onClick={handleConfirmAction}
+                disabled={confirmBusy}
+              >
+                {confirmBusy ? "Working..." : confirmCopy.actionLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {showReport ? (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-neutral-950/80 p-6">
