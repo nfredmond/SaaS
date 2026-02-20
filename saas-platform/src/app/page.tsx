@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MapView from "@/components/MapView";
 import type { AnalysisRun, Layer, Metric, ReportPayload, ReportRecord } from "@/lib/reportSchema";
 import type { Feature, GeoJsonProperties, MultiPolygon, Polygon } from "geojson";
@@ -28,6 +28,22 @@ type ToastItem = {
   tone: "success" | "error" | "info";
   message: string;
 };
+
+type RunsResponse = {
+  runs?: RunEntry[];
+  total?: number;
+  filtered?: number;
+  latestRun?: RunEntry | null;
+};
+
+type ReportsResponse = {
+  reports?: ReportRecord[];
+  total?: number;
+  filtered?: number;
+};
+
+const RUN_HISTORY_PAGE_SIZE = 6;
+const REPORT_HISTORY_PAGE_SIZE = 4;
 
 const PRESETS = [
   {
@@ -68,7 +84,16 @@ export default function Home() {
   const [lastRunId, setLastRunId] = useState<string | null>(null);
   const [lastRunAt, setLastRunAt] = useState<string | null>(null);
   const [runHistory, setRunHistory] = useState<RunEntry[]>([]);
+  const [runHistorySearch, setRunHistorySearch] = useState("");
+  const [runHistoryLimit, setRunHistoryLimit] = useState(RUN_HISTORY_PAGE_SIZE);
+  const [runHistoryTotals, setRunHistoryTotals] = useState({ total: 0, filtered: 0 });
   const [reportHistory, setReportHistory] = useState<ReportRecord[]>([]);
+  const [reportHistorySearch, setReportHistorySearch] = useState("");
+  const [reportHistoryTemplate, setReportHistoryTemplate] = useState<"all" | "corridor" | "ss4a">(
+    "all"
+  );
+  const [reportHistoryLimit, setReportHistoryLimit] = useState(REPORT_HISTORY_PAGE_SIZE);
+  const [reportHistoryTotals, setReportHistoryTotals] = useState({ total: 0, filtered: 0 });
   const [mapLayers, setMapLayers] = useState({
     crashPoints: true,
     jobHexes: true,
@@ -183,57 +208,80 @@ export default function Home() {
     }, 2800);
   };
 
-  useEffect(() => {
-    let active = true;
-
-    async function loadRuns() {
-      setIsRunsLoading(true);
-      try {
-        const response = await fetch("/api/runs", { cache: "no-store" });
-        const payload = await response.json();
-        const runs = (payload?.runs ?? []) as RunEntry[];
-        if (!active) return;
-        setRunHistory(runs);
-        if (runs[0]) {
-          setLastRunId(runs[0].id);
-          setLastRunAt(runs[0].createdAt);
-          setSelectedRunId((prev) => prev ?? runs[0].id);
-        }
-      } finally {
-        if (active) setIsRunsLoading(false);
+  const loadRuns = useCallback(async () => {
+    setIsRunsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", String(runHistoryLimit));
+      if (runHistorySearch.trim()) {
+        params.set("q", runHistorySearch.trim());
       }
-    }
 
-    loadRuns();
-    return () => {
-      active = false;
-    };
-  }, []);
+      const response = await fetch(`/api/runs?${params.toString()}`, { cache: "no-store" });
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = (await response.json()) as RunsResponse;
+      const runs = (payload.runs ?? []) as RunEntry[];
+      setRunHistory(runs);
+      setRunHistoryTotals({
+        total: typeof payload.total === "number" ? payload.total : runs.length,
+        filtered: typeof payload.filtered === "number" ? payload.filtered : runs.length,
+      });
+
+      const latestRun = payload.latestRun;
+      if (latestRun) {
+        setLastRunId(latestRun.id);
+        setLastRunAt(latestRun.createdAt);
+      } else {
+        setLastRunId(null);
+        setLastRunAt(null);
+      }
+
+      setSelectedRunId((prev) => (prev && runs.some((run) => run.id === prev) ? prev : (runs[0]?.id ?? null)));
+    } finally {
+      setIsRunsLoading(false);
+    }
+  }, [runHistoryLimit, runHistorySearch]);
+
+  const loadReports = useCallback(async () => {
+    setIsReportsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", String(reportHistoryLimit));
+      params.set("template", reportHistoryTemplate);
+      if (reportHistorySearch.trim()) {
+        params.set("q", reportHistorySearch.trim());
+      }
+
+      const response = await fetch(`/api/reports?${params.toString()}`, { cache: "no-store" });
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = (await response.json()) as ReportsResponse;
+      const reports = (payload.reports ?? []) as ReportRecord[];
+      setReportHistory(reports);
+      setReportHistoryTotals({
+        total: typeof payload.total === "number" ? payload.total : reports.length,
+        filtered: typeof payload.filtered === "number" ? payload.filtered : reports.length,
+      });
+      setSelectedReportId((prev) =>
+        prev && reports.some((report) => report.id === prev) ? prev : (reports[0]?.id ?? null)
+      );
+    } finally {
+      setIsReportsLoading(false);
+    }
+  }, [reportHistoryLimit, reportHistorySearch, reportHistoryTemplate]);
 
   useEffect(() => {
-    let active = true;
+    void loadRuns();
+  }, [loadRuns]);
 
-    async function loadReports() {
-      setIsReportsLoading(true);
-      try {
-        const response = await fetch("/api/reports", { cache: "no-store" });
-        const payload = await response.json();
-        const reports = (payload?.reports ?? []) as ReportRecord[];
-        if (!active) return;
-        setReportHistory(reports);
-        setSelectedReportId((prev) =>
-          prev && reports.some((report) => report.id === prev) ? prev : (reports[0]?.id ?? null)
-        );
-      } finally {
-        if (active) setIsReportsLoading(false);
-      }
-    }
-
-    loadReports();
-    return () => {
-      active = false;
-    };
-  }, []);
+  useEffect(() => {
+    void loadReports();
+  }, [loadReports]);
 
   const handleBoundaryUpload = async (file: File | null) => {
     setBoundaryFile(file);
@@ -278,7 +326,6 @@ export default function Home() {
       const runNotes = data.notes ?? [];
       const runLayers = data.layers ?? [];
       const runLocalSummary = data.localSummary ?? null;
-      const runQuery = query.trim() || "Untitled run";
 
       setMetrics(data.metrics ?? []);
       setLayers(runLayers);
@@ -286,19 +333,8 @@ export default function Home() {
       setLocalSummary(runLocalSummary);
       setLastRunId(runId);
       setLastRunAt(runTime);
-      setRunHistory((prev) => [
-        {
-          id: runId,
-          query: runQuery,
-          createdAt: runTime,
-          metrics: data.metrics ?? [],
-          layers: runLayers,
-          notes: runNotes,
-          localSummary: runLocalSummary,
-        },
-        ...prev,
-      ]);
       setSelectedRunId(runId);
+      await loadRuns();
       setReportStatus("ready");
       setAnalysisStatus("complete");
       pushToast("success", "Analysis run completed.");
@@ -360,13 +396,7 @@ export default function Home() {
       window.URL.revokeObjectURL(url);
       setReportDownloadStatus("idle");
 
-      const reportsResponse = await fetch("/api/reports", { cache: "no-store" });
-      const reportsPayload = await reportsResponse.json();
-      const reports = (reportsPayload?.reports ?? []) as ReportRecord[];
-      setReportHistory(reports);
-      setSelectedReportId((prev) =>
-        prev && reports.some((report) => report.id === prev) ? prev : (reports[0]?.id ?? null)
-      );
+      await loadReports();
       pushToast("success", "Report PDF downloaded.");
     } catch {
       setReportDownloadStatus("error");
@@ -385,20 +415,7 @@ export default function Home() {
       return;
     }
 
-    const payload = await response.json();
-    const runs = (payload?.runs ?? []) as RunEntry[];
-    setRunHistory(runs);
-
-    if (runs[0]) {
-      setSelectedRunId(runs[0].id);
-      setLastRunId(runs[0].id);
-      setLastRunAt(runs[0].createdAt);
-      return;
-    }
-
-    setSelectedRunId(null);
-    setLastRunId(null);
-    setLastRunAt(null);
+    await loadRuns();
     pushToast("success", "Run deleted.");
   };
 
@@ -410,12 +427,7 @@ export default function Home() {
         pushToast("error", "Unable to clear run history.");
         return;
       }
-      const payload = await response.json();
-      const runs = (payload?.runs ?? []) as RunEntry[];
-      setRunHistory(runs);
-      setSelectedRunId(null);
-      setLastRunId(null);
-      setLastRunAt(null);
+      await loadRuns();
       pushToast("info", "Run history cleared.");
     } finally {
       setRunClearStatus("idle");
@@ -466,14 +478,7 @@ export default function Home() {
         throw new Error(payload?.error ?? "Unable to delete report.");
       }
 
-      const payload = await response.json();
-      const reports = (payload?.reports ?? []) as ReportRecord[];
-      setReportHistory(reports);
-      if (reports[0]) {
-        setSelectedReportId((prev) => (prev === report.id ? reports[0].id : prev));
-      } else {
-        setSelectedReportId(null);
-      }
+      await loadReports();
       pushToast("success", "Report deleted.");
     } catch (error) {
       setReportDeleteError(error instanceof Error ? error.message : "Unable to delete report.");
@@ -495,10 +500,7 @@ export default function Home() {
         throw new Error(payload?.error ?? "Unable to clear reports.");
       }
 
-      const payload = await response.json();
-      const reports = (payload?.reports ?? []) as ReportRecord[];
-      setReportHistory(reports);
-      setSelectedReportId(null);
+      await loadReports();
       pushToast("info", "Report history cleared.");
     } catch (error) {
       setReportDeleteError(error instanceof Error ? error.message : "Unable to clear reports.");
@@ -599,26 +601,21 @@ export default function Home() {
       }
 
       const payload = await response.json();
-      const runs = (payload?.runs ?? []) as RunEntry[];
-      const reports = (payload?.reports ?? []) as ReportRecord[];
-      setRunHistory(runs);
-      setReportHistory(reports);
-
-      if (runs[0]) {
-        setSelectedRunId(runs[0].id);
-        setLastRunId(runs[0].id);
-        setLastRunAt(runs[0].createdAt);
-      } else {
-        setSelectedRunId(null);
-        setLastRunId(null);
-        setLastRunAt(null);
-      }
-
-      setSelectedReportId(reports[0]?.id ?? null);
+      await Promise.all([loadRuns(), loadReports()]);
       setLastRestoreAt(payload.restoredAt ?? new Date().toISOString());
       setLastRestoreCounts({
-        runs: typeof payload.runCount === "number" ? payload.runCount : runs.length,
-        reports: typeof payload.reportCount === "number" ? payload.reportCount : reports.length,
+        runs:
+          typeof payload.runCount === "number"
+            ? payload.runCount
+            : Array.isArray(payload.runs)
+              ? payload.runs.length
+              : 0,
+        reports:
+          typeof payload.reportCount === "number"
+            ? payload.reportCount
+            : Array.isArray(payload.reports)
+              ? payload.reports.length
+              : 0,
       });
       setRestoreStatus("idle");
       pushToast("success", "Backup restored.");
@@ -828,18 +825,34 @@ export default function Home() {
               <button
                 className="rounded-full border border-neutral-700 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-neutral-300 transition hover:border-neutral-500 disabled:opacity-70"
                 onClick={() => setConfirmAction({ kind: "clear-runs" })}
-                disabled={runClearStatus === "clearing" || runHistory.length === 0}
+                disabled={runClearStatus === "clearing" || runHistoryTotals.total === 0}
               >
                 {runClearStatus === "clearing" ? "Clearing..." : "Clear"}
               </button>
+            </div>
+            <div className="mt-3 space-y-2">
+              <input
+                className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-neutral-100 placeholder:text-neutral-500"
+                placeholder="Search run query or notes..."
+                value={runHistorySearch}
+                onChange={(event) => {
+                  setRunHistorySearch(event.target.value);
+                  setRunHistoryLimit(RUN_HISTORY_PAGE_SIZE);
+                }}
+              />
+              <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">
+                Showing {runHistory.length} of {runHistoryTotals.filtered} filtered ({runHistoryTotals.total} total)
+              </p>
             </div>
             <div className="mt-4 space-y-3 text-sm text-neutral-300">
               {isRunsLoading ? (
                 <p className="text-xs text-neutral-500">Loading runs...</p>
               ) : runHistory.length === 0 ? (
-                <p className="text-xs text-neutral-500">No runs yet.</p>
+                <p className="text-xs text-neutral-500">
+                  {runHistoryTotals.total > 0 ? "No runs match this filter." : "No runs yet."}
+                </p>
               ) : (
-                runHistory.slice(0, 6).map((run) => (
+                runHistory.map((run) => (
                   <button
                     key={run.id}
                     className={`w-full rounded-xl border p-3 text-left transition ${
@@ -857,6 +870,17 @@ export default function Home() {
                   </button>
                 ))
               )}
+              {runHistory.length < runHistoryTotals.filtered ? (
+                <button
+                  className="w-full rounded-xl border border-neutral-700 px-3 py-2 text-xs uppercase tracking-[0.2em] text-neutral-300 transition hover:border-neutral-500 disabled:opacity-70"
+                  onClick={() =>
+                    setRunHistoryLimit((prev) => Math.min(prev + RUN_HISTORY_PAGE_SIZE, runHistoryTotals.filtered))
+                  }
+                  disabled={isRunsLoading}
+                >
+                  Load More
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -866,10 +890,37 @@ export default function Home() {
               <button
                 className="rounded-full border border-neutral-700 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-neutral-300 transition hover:border-neutral-500 disabled:opacity-70"
                 onClick={() => setConfirmAction({ kind: "clear-reports" })}
-                disabled={reportClearStatus === "clearing" || reportHistory.length === 0}
+                disabled={reportClearStatus === "clearing" || reportHistoryTotals.total === 0}
               >
                 {reportClearStatus === "clearing" ? "Clearing..." : "Clear"}
               </button>
+            </div>
+            <div className="mt-3 space-y-2">
+              <input
+                className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-neutral-100 placeholder:text-neutral-500"
+                placeholder="Search report name or query..."
+                value={reportHistorySearch}
+                onChange={(event) => {
+                  setReportHistorySearch(event.target.value);
+                  setReportHistoryLimit(REPORT_HISTORY_PAGE_SIZE);
+                }}
+              />
+              <select
+                className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-neutral-200"
+                value={reportHistoryTemplate}
+                onChange={(event) => {
+                  setReportHistoryTemplate(event.target.value as "all" | "corridor" | "ss4a");
+                  setReportHistoryLimit(REPORT_HISTORY_PAGE_SIZE);
+                }}
+              >
+                <option value="all">All templates</option>
+                <option value="corridor">Corridor template</option>
+                <option value="ss4a">SS4A template</option>
+              </select>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">
+                Showing {reportHistory.length} of {reportHistoryTotals.filtered} filtered (
+                {reportHistoryTotals.total} total)
+              </p>
             </div>
             <div className="mt-4 space-y-3 text-sm text-neutral-300">
               {reportRedownloadError ? (
@@ -881,9 +932,13 @@ export default function Home() {
               {isReportsLoading ? (
                 <p className="text-xs text-neutral-500">Loading reports...</p>
               ) : reportHistory.length === 0 ? (
-                <p className="text-xs text-neutral-500">No reports generated yet.</p>
+                <p className="text-xs text-neutral-500">
+                  {reportHistoryTotals.total > 0
+                    ? "No reports match this filter."
+                    : "No reports generated yet."}
+                </p>
               ) : (
-                reportHistory.slice(0, 4).map((report) => (
+                reportHistory.map((report) => (
                   <div
                     key={report.id}
                     className={`rounded-xl border bg-neutral-950 p-3 ${
@@ -945,6 +1000,19 @@ export default function Home() {
                   </div>
                 ))
               )}
+              {reportHistory.length < reportHistoryTotals.filtered ? (
+                <button
+                  className="w-full rounded-xl border border-neutral-700 px-3 py-2 text-xs uppercase tracking-[0.2em] text-neutral-300 transition hover:border-neutral-500 disabled:opacity-70"
+                  onClick={() =>
+                    setReportHistoryLimit((prev) =>
+                      Math.min(prev + REPORT_HISTORY_PAGE_SIZE, reportHistoryTotals.filtered)
+                    )
+                  }
+                  disabled={isReportsLoading}
+                >
+                  Load More
+                </button>
+              ) : null}
             </div>
           </div>
 
