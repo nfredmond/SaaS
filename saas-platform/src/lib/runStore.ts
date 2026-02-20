@@ -46,3 +46,9 @@ export function clearRuns(): AnalysisRun[] {
   fs.writeFileSync(RUNS_PATH, JSON.stringify([], null, 2));
   return [];
 }
+
+export function replaceRuns(runs: AnalysisRun[]): AnalysisRun[] {
+  const next = runs.slice(0, MAX_RUNS);
+  fs.writeFileSync(RUNS_PATH, JSON.stringify(next, null, 2));
+  return next;
+}

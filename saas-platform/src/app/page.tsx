@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import MapView from "@/components/MapView";
 import type { AnalysisRun, Layer, Metric, ReportPayload, ReportRecord } from "@/lib/reportSchema";
 import type { Feature, GeoJsonProperties, MultiPolygon, Polygon } from "geojson";
@@ -79,6 +79,11 @@ export default function Home() {
   const [reportDeleteError, setReportDeleteError] = useState<string | null>(null);
   const [runClearStatus, setRunClearStatus] = useState<"idle" | "clearing">("idle");
   const [reportClearStatus, setReportClearStatus] = useState<"idle" | "clearing">("idle");
+  const [backupStatus, setBackupStatus] = useState<"idle" | "exporting" | "error">("idle");
+  const [restoreStatus, setRestoreStatus] = useState<"idle" | "restoring" | "error">("idle");
+  const [restoreMode, setRestoreMode] = useState<"replace" | "merge">("replace");
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const backupInputRef = useRef<HTMLInputElement | null>(null);
 
   const jobsMetric = metrics.find((metric) => metric.name === "jobs_30min");
   const hinMetric = metrics.find((metric) => metric.name === "hin_corridors");
@@ -421,8 +426,97 @@ export default function Home() {
     }
   };
 
+  const handleExportBackup = async () => {
+    setBackupStatus("exporting");
+    try {
+      const response = await fetch("/api/backup", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error("Unable to export backup.");
+      }
+
+      const payload = await response.json();
+      const json = JSON.stringify(payload, null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `rural-atlas-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setBackupStatus("idle");
+    } catch {
+      setBackupStatus("error");
+      setTimeout(() => setBackupStatus("idle"), 2500);
+    }
+  };
+
+  const handleRestoreButtonClick = () => {
+    backupInputRef.current?.click();
+  };
+
+  const handleRestoreBackup = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setRestoreError(null);
+    setRestoreStatus("restoring");
+
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw) as { runs?: RunEntry[]; reports?: ReportRecord[] };
+
+      const response = await fetch("/api/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runs: parsed.runs ?? [],
+          reports: parsed.reports ?? [],
+          mode: restoreMode,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error ?? "Unable to restore backup.");
+      }
+
+      const payload = await response.json();
+      const runs = (payload?.runs ?? []) as RunEntry[];
+      const reports = (payload?.reports ?? []) as ReportRecord[];
+      setRunHistory(runs);
+      setReportHistory(reports);
+
+      if (runs[0]) {
+        setSelectedRunId(runs[0].id);
+        setLastRunId(runs[0].id);
+        setLastRunAt(runs[0].createdAt);
+      } else {
+        setSelectedRunId(null);
+        setLastRunId(null);
+        setLastRunAt(null);
+      }
+
+      setSelectedReportId(reports[0]?.id ?? null);
+      setRestoreStatus("idle");
+    } catch (error) {
+      setRestoreError(error instanceof Error ? error.message : "Unable to restore backup.");
+      setRestoreStatus("error");
+      setTimeout(() => setRestoreStatus("idle"), 2500);
+    }
+  };
+
   return (
     <div className="min-h-screen text-neutral-50 app-shell">
+      <input
+        ref={backupInputRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={handleRestoreBackup}
+      />
       <header className="border-b border-neutral-800/80 bg-neutral-950/70 backdrop-blur">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-5">
           <div className="space-y-1">
@@ -439,12 +533,39 @@ export default function Home() {
               Status: {analysisStatus}
             </div>
             <button
+              className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-200 transition hover:border-neutral-500 disabled:opacity-70"
+              onClick={handleExportBackup}
+              disabled={backupStatus === "exporting"}
+            >
+              {backupStatus === "exporting" ? "Exporting..." : "Export Backup"}
+            </button>
+            <button
+              className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-200 transition hover:border-neutral-500 disabled:opacity-70"
+              onClick={handleRestoreButtonClick}
+              disabled={restoreStatus === "restoring"}
+            >
+              {restoreStatus === "restoring" ? "Restoring..." : "Restore Backup"}
+            </button>
+            <button
               className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-200 transition hover:border-neutral-500"
               onClick={() => setShowReport(true)}
             >
               {reportStatus === "ready" ? "Export Report" : "Draft Report"}
             </button>
           </div>
+        </div>
+        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-6 pb-4">
+          <div className="text-xs text-neutral-500">
+            Restore mode:{" "}
+            <button
+              className="rounded-full border border-neutral-700 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-neutral-300"
+              onClick={() => setRestoreMode((prev) => (prev === "replace" ? "merge" : "replace"))}
+              disabled={restoreStatus === "restoring"}
+            >
+              {restoreMode}
+            </button>
+          </div>
+          {restoreError ? <p className="text-xs text-rose-300">{restoreError}</p> : null}
         </div>
       </header>
 

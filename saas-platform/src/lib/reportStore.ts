@@ -51,3 +51,9 @@ export function clearReports(): ReportRecord[] {
   fs.writeFileSync(REPORTS_PATH, JSON.stringify([], null, 2));
   return [];
 }
+
+export function replaceReports(reports: ReportRecord[]): ReportRecord[] {
+  const next = reports.slice(0, MAX_REPORTS);
+  fs.writeFileSync(REPORTS_PATH, JSON.stringify(next, null, 2));
+  return next;
+}
