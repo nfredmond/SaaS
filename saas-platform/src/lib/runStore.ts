@@ -41,3 +41,8 @@ export function deleteRunById(id: string): AnalysisRun[] {
   fs.writeFileSync(RUNS_PATH, JSON.stringify(updated, null, 2));
   return updated;
 }
+
+export function clearRuns(): AnalysisRun[] {
+  fs.writeFileSync(RUNS_PATH, JSON.stringify([], null, 2));
+  return [];
+}

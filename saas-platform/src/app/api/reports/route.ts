@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { deleteReportById, readReports } from "@/lib/reportStore";
+import { clearReports, deleteReportById, readReports } from "@/lib/reportStore";
 
 function toPublicReport(report: ReturnType<typeof readReports>[number]) {
   return {
@@ -10,6 +10,7 @@ function toPublicReport(report: ReturnType<typeof readReports>[number]) {
     query: report.query,
     metricCount: report.metricCount,
     noteCount: report.noteCount,
+    hasPayload: Boolean(report.payload),
   };
 }
 
@@ -20,7 +21,12 @@ export async function GET() {
 
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
+  const clearAll = searchParams.get("all") === "true";
   const id = searchParams.get("id");
+
+  if (clearAll) {
+    return NextResponse.json({ reports: clearReports().map(toPublicReport) });
+  }
 
   if (!id) {
     return NextResponse.json({ error: "Missing report id" }, { status: 400 });

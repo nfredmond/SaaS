@@ -46,3 +46,8 @@ export function deleteReportById(id: string): ReportRecord[] {
   fs.writeFileSync(REPORTS_PATH, JSON.stringify(updated, null, 2));
   return updated;
 }
+
+export function clearReports(): ReportRecord[] {
+  fs.writeFileSync(REPORTS_PATH, JSON.stringify([], null, 2));
+  return [];
+}

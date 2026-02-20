@@ -66,6 +66,7 @@ export default function Home() {
   const [isReportsLoading, setIsReportsLoading] = useState(true);
   const [showReport, setShowReport] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle");
   const [reportStatus, setReportStatus] = useState<"idle" | "ready">("idle");
   const [reportTemplate, setReportTemplate] = useState<"corridor" | "ss4a">("corridor");
@@ -76,6 +77,8 @@ export default function Home() {
   const [reportRedownloadError, setReportRedownloadError] = useState<string | null>(null);
   const [reportDeleteId, setReportDeleteId] = useState<string | null>(null);
   const [reportDeleteError, setReportDeleteError] = useState<string | null>(null);
+  const [runClearStatus, setRunClearStatus] = useState<"idle" | "clearing">("idle");
+  const [reportClearStatus, setReportClearStatus] = useState<"idle" | "clearing">("idle");
 
   const jobsMetric = metrics.find((metric) => metric.name === "jobs_30min");
   const hinMetric = metrics.find((metric) => metric.name === "hin_corridors");
@@ -104,6 +107,10 @@ export default function Home() {
   const selectedRun = useMemo(
     () => runHistory.find((run) => run.id === selectedRunId) ?? null,
     [runHistory, selectedRunId]
+  );
+  const selectedReport = useMemo(
+    () => reportHistory.find((report) => report.id === selectedReportId) ?? null,
+    [reportHistory, selectedReportId]
   );
 
   useEffect(() => {
@@ -144,6 +151,9 @@ export default function Home() {
         const reports = (payload?.reports ?? []) as ReportRecord[];
         if (!active) return;
         setReportHistory(reports);
+        setSelectedReportId((prev) =>
+          prev && reports.some((report) => report.id === prev) ? prev : (reports[0]?.id ?? null)
+        );
       } finally {
         if (active) setIsReportsLoading(false);
       }
@@ -278,7 +288,11 @@ export default function Home() {
 
       const reportsResponse = await fetch("/api/reports", { cache: "no-store" });
       const reportsPayload = await reportsResponse.json();
-      setReportHistory((reportsPayload?.reports ?? []) as ReportRecord[]);
+      const reports = (reportsPayload?.reports ?? []) as ReportRecord[];
+      setReportHistory(reports);
+      setSelectedReportId((prev) =>
+        prev && reports.some((report) => report.id === prev) ? prev : (reports[0]?.id ?? null)
+      );
     } catch {
       setReportDownloadStatus("error");
       setTimeout(() => setReportDownloadStatus("idle"), 2500);
@@ -308,6 +322,22 @@ export default function Home() {
     setSelectedRunId(null);
     setLastRunId(null);
     setLastRunAt(null);
+  };
+
+  const handleClearRunHistory = async () => {
+    setRunClearStatus("clearing");
+    try {
+      const response = await fetch("/api/runs?all=true", { method: "DELETE" });
+      if (!response.ok) return;
+      const payload = await response.json();
+      const runs = (payload?.runs ?? []) as RunEntry[];
+      setRunHistory(runs);
+      setSelectedRunId(null);
+      setLastRunId(null);
+      setLastRunAt(null);
+    } finally {
+      setRunClearStatus("idle");
+    }
   };
 
   const handleRedownloadReport = async (report: ReportRecord) => {
@@ -353,12 +383,41 @@ export default function Home() {
       }
 
       const payload = await response.json();
-      setReportHistory((payload?.reports ?? []) as ReportRecord[]);
+      const reports = (payload?.reports ?? []) as ReportRecord[];
+      setReportHistory(reports);
+      if (reports[0]) {
+        setSelectedReportId((prev) => (prev === report.id ? reports[0].id : prev));
+      } else {
+        setSelectedReportId(null);
+      }
     } catch (error) {
       setReportDeleteError(error instanceof Error ? error.message : "Unable to delete report.");
       setTimeout(() => setReportDeleteError(null), 2800);
     } finally {
       setReportDeleteId(null);
+    }
+  };
+
+  const handleClearReportHistory = async () => {
+    setReportDeleteError(null);
+    setReportClearStatus("clearing");
+
+    try {
+      const response = await fetch("/api/reports?all=true", { method: "DELETE" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error ?? "Unable to clear reports.");
+      }
+
+      const payload = await response.json();
+      const reports = (payload?.reports ?? []) as ReportRecord[];
+      setReportHistory(reports);
+      setSelectedReportId(null);
+    } catch (error) {
+      setReportDeleteError(error instanceof Error ? error.message : "Unable to clear reports.");
+      setTimeout(() => setReportDeleteError(null), 2800);
+    } finally {
+      setReportClearStatus("idle");
     }
   };
 
@@ -503,7 +562,16 @@ export default function Home() {
           </div>
 
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
-            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Run History</p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Run History</p>
+              <button
+                className="rounded-full border border-neutral-700 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-neutral-300 transition hover:border-neutral-500 disabled:opacity-70"
+                onClick={handleClearRunHistory}
+                disabled={runClearStatus === "clearing" || runHistory.length === 0}
+              >
+                {runClearStatus === "clearing" ? "Clearing..." : "Clear"}
+              </button>
+            </div>
             <div className="mt-4 space-y-3 text-sm text-neutral-300">
               {isRunsLoading ? (
                 <p className="text-xs text-neutral-500">Loading runs...</p>
@@ -532,7 +600,16 @@ export default function Home() {
           </div>
 
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
-            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Recent Reports</p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Recent Reports</p>
+              <button
+                className="rounded-full border border-neutral-700 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-neutral-300 transition hover:border-neutral-500 disabled:opacity-70"
+                onClick={handleClearReportHistory}
+                disabled={reportClearStatus === "clearing" || reportHistory.length === 0}
+              >
+                {reportClearStatus === "clearing" ? "Clearing..." : "Clear"}
+              </button>
+            </div>
             <div className="mt-4 space-y-3 text-sm text-neutral-300">
               {reportRedownloadError ? (
                 <p className="text-xs text-rose-300">{reportRedownloadError}</p>
@@ -548,7 +625,12 @@ export default function Home() {
                 reportHistory.slice(0, 4).map((report) => (
                   <div
                     key={report.id}
-                    className="rounded-xl border border-neutral-800 bg-neutral-950 p-3"
+                    className={`rounded-xl border bg-neutral-950 p-3 ${
+                      selectedReportId === report.id
+                        ? "border-emerald-400/60"
+                        : "border-neutral-800"
+                    }`}
+                    onClick={() => setSelectedReportId(report.id)}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs text-neutral-500">
@@ -563,15 +645,38 @@ export default function Home() {
                     <div className="mt-2 flex items-center gap-2">
                       <button
                         className="rounded-full border border-neutral-700 px-3 py-1 text-xs text-neutral-200 transition hover:border-neutral-500 disabled:opacity-70"
-                        onClick={() => handleRedownloadReport(report)}
-                        disabled={reportRedownloadId === report.id || reportDeleteId === report.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedReportId(report.id);
+                        }}
+                      >
+                        View
+                      </button>
+                      <button
+                        className="rounded-full border border-neutral-700 px-3 py-1 text-xs text-neutral-200 transition hover:border-neutral-500 disabled:opacity-70"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleRedownloadReport(report);
+                        }}
+                        disabled={
+                          reportRedownloadId === report.id ||
+                          reportDeleteId === report.id ||
+                          reportClearStatus === "clearing"
+                        }
                       >
                         {reportRedownloadId === report.id ? "Rebuilding..." : "Re-download"}
                       </button>
                       <button
                         className="rounded-full border border-rose-400/40 px-3 py-1 text-xs text-rose-200 transition hover:border-rose-300 disabled:opacity-70"
-                        onClick={() => handleDeleteReport(report)}
-                        disabled={reportDeleteId === report.id || reportRedownloadId === report.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleDeleteReport(report);
+                        }}
+                        disabled={
+                          reportDeleteId === report.id ||
+                          reportRedownloadId === report.id ||
+                          reportClearStatus === "clearing"
+                        }
                       >
                         {reportDeleteId === report.id ? "Deleting..." : "Delete"}
                       </button>
@@ -580,6 +685,61 @@ export default function Home() {
                 ))
               )}
             </div>
+          </div>
+
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Selected Report</p>
+            {selectedReport ? (
+              <div className="mt-3 space-y-3 text-sm text-neutral-300">
+                <div>
+                  <p className="font-semibold text-neutral-100">{selectedReport.fileName}</p>
+                  <p className="text-xs text-neutral-500">
+                    {new Date(selectedReport.createdAt).toLocaleString()}
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-950 px-3 py-2">
+                    Template: {selectedReport.template}
+                  </div>
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-950 px-3 py-2">
+                    Payload: {selectedReport.hasPayload ? "available" : "missing"}
+                  </div>
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-950 px-3 py-2">
+                    Metrics: {selectedReport.metricCount}
+                  </div>
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-950 px-3 py-2">
+                    Notes: {selectedReport.noteCount}
+                  </div>
+                </div>
+                <p className="text-xs text-neutral-500">{selectedReport.query}</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="rounded-full border border-neutral-700 px-3 py-1 text-xs text-neutral-200 transition hover:border-neutral-500 disabled:opacity-70"
+                    onClick={() => handleRedownloadReport(selectedReport)}
+                    disabled={
+                      reportRedownloadId === selectedReport.id ||
+                      reportDeleteId === selectedReport.id ||
+                      reportClearStatus === "clearing"
+                    }
+                  >
+                    {reportRedownloadId === selectedReport.id ? "Rebuilding..." : "Re-download"}
+                  </button>
+                  <button
+                    className="rounded-full border border-rose-400/40 px-3 py-1 text-xs text-rose-200 transition hover:border-rose-300 disabled:opacity-70"
+                    onClick={() => handleDeleteReport(selectedReport)}
+                    disabled={
+                      reportDeleteId === selectedReport.id ||
+                      reportRedownloadId === selectedReport.id ||
+                      reportClearStatus === "clearing"
+                    }
+                  >
+                    {reportDeleteId === selectedReport.id ? "Deleting..." : "Delete"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-neutral-500">Select a report to inspect details.</p>
+            )}
           </div>
         </section>
 

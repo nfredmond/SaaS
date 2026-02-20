@@ -32,6 +32,7 @@ export type ReportRecord = {
   query: string;
   metricCount: number;
   noteCount: number;
+  hasPayload?: boolean;
   payload?: ReportPayload;
 };
 
