@@ -23,6 +23,12 @@ type ConfirmAction =
   | { kind: "delete-report"; report: ReportRecord }
   | { kind: "clear-reports" };
 
+type ToastItem = {
+  id: string;
+  tone: "success" | "error" | "info";
+  message: string;
+};
+
 const PRESETS = [
   {
     title: "Safety Hotspots",
@@ -99,6 +105,7 @@ export default function Home() {
   const [lastRestoreCounts, setLastRestoreCounts] = useState<{ runs: number; reports: number } | null>(
     null
   );
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const backupInputRef = useRef<HTMLInputElement | null>(null);
 
   const jobsMetric = metrics.find((metric) => metric.name === "jobs_30min");
@@ -165,6 +172,16 @@ export default function Home() {
         return null;
     }
   }, [confirmAction]);
+
+  const pushToast = (tone: ToastItem["tone"], message: string) => {
+    const id = typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random()}`;
+    setToasts((prev) => [...prev, { id, tone, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    }, 2800);
+  };
 
   useEffect(() => {
     let active = true;
@@ -284,6 +301,10 @@ export default function Home() {
       setSelectedRunId(runId);
       setReportStatus("ready");
       setAnalysisStatus("complete");
+      pushToast("success", "Analysis run completed.");
+    } catch {
+      setAnalysisStatus("idle");
+      pushToast("error", "Analysis failed. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -346,8 +367,10 @@ export default function Home() {
       setSelectedReportId((prev) =>
         prev && reports.some((report) => report.id === prev) ? prev : (reports[0]?.id ?? null)
       );
+      pushToast("success", "Report PDF downloaded.");
     } catch {
       setReportDownloadStatus("error");
+      pushToast("error", "PDF generation failed.");
       setTimeout(() => setReportDownloadStatus("idle"), 2500);
     }
   };
@@ -357,7 +380,10 @@ export default function Home() {
       method: "DELETE",
     });
 
-    if (!response.ok) return;
+    if (!response.ok) {
+      pushToast("error", "Unable to delete run.");
+      return;
+    }
 
     const payload = await response.json();
     const runs = (payload?.runs ?? []) as RunEntry[];
@@ -373,19 +399,24 @@ export default function Home() {
     setSelectedRunId(null);
     setLastRunId(null);
     setLastRunAt(null);
+    pushToast("success", "Run deleted.");
   };
 
   const handleClearRunHistory = async () => {
     setRunClearStatus("clearing");
     try {
       const response = await fetch("/api/runs?all=true", { method: "DELETE" });
-      if (!response.ok) return;
+      if (!response.ok) {
+        pushToast("error", "Unable to clear run history.");
+        return;
+      }
       const payload = await response.json();
       const runs = (payload?.runs ?? []) as RunEntry[];
       setRunHistory(runs);
       setSelectedRunId(null);
       setLastRunId(null);
       setLastRunAt(null);
+      pushToast("info", "Run history cleared.");
     } finally {
       setRunClearStatus("idle");
     }
@@ -411,8 +442,10 @@ export default function Home() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
+      pushToast("success", "Report downloaded from history.");
     } catch (error) {
       setReportRedownloadError(error instanceof Error ? error.message : "Unable to re-download report.");
+      pushToast("error", "Unable to re-download report.");
       setTimeout(() => setReportRedownloadError(null), 2800);
     } finally {
       setReportRedownloadId(null);
@@ -441,8 +474,10 @@ export default function Home() {
       } else {
         setSelectedReportId(null);
       }
+      pushToast("success", "Report deleted.");
     } catch (error) {
       setReportDeleteError(error instanceof Error ? error.message : "Unable to delete report.");
+      pushToast("error", "Unable to delete report.");
       setTimeout(() => setReportDeleteError(null), 2800);
     } finally {
       setReportDeleteId(null);
@@ -464,8 +499,10 @@ export default function Home() {
       const reports = (payload?.reports ?? []) as ReportRecord[];
       setReportHistory(reports);
       setSelectedReportId(null);
+      pushToast("info", "Report history cleared.");
     } catch (error) {
       setReportDeleteError(error instanceof Error ? error.message : "Unable to clear reports.");
+      pushToast("error", "Unable to clear report history.");
       setTimeout(() => setReportDeleteError(null), 2800);
     } finally {
       setReportClearStatus("idle");
@@ -522,8 +559,10 @@ export default function Home() {
         reports: Array.isArray(payload.reports) ? payload.reports.length : 0,
       });
       setBackupStatus("idle");
+      pushToast("success", "Backup exported.");
     } catch {
       setBackupStatus("error");
+      pushToast("error", "Unable to export backup.");
       setTimeout(() => setBackupStatus("idle"), 2500);
     }
   };
@@ -582,15 +621,35 @@ export default function Home() {
         reports: typeof payload.reportCount === "number" ? payload.reportCount : reports.length,
       });
       setRestoreStatus("idle");
+      pushToast("success", "Backup restored.");
     } catch (error) {
       setRestoreError(error instanceof Error ? error.message : "Unable to restore backup.");
       setRestoreStatus("error");
+      pushToast("error", "Unable to restore backup.");
       setTimeout(() => setRestoreStatus("idle"), 2500);
     }
   };
 
   return (
     <div className="min-h-screen text-neutral-50 app-shell">
+      {toasts.length > 0 ? (
+        <div className="pointer-events-none fixed right-4 top-4 z-[60] flex w-[320px] flex-col gap-2">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`rounded-xl border px-4 py-3 text-sm shadow-xl ${
+                toast.tone === "success"
+                  ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-100"
+                  : toast.tone === "error"
+                    ? "border-rose-400/40 bg-rose-400/10 text-rose-100"
+                    : "border-sky-400/40 bg-sky-400/10 text-sky-100"
+              }`}
+            >
+              {toast.message}
+            </div>
+          ))}
+        </div>
+      ) : null}
       <input
         ref={backupInputRef}
         type="file"
