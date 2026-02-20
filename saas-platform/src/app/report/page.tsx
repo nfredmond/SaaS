@@ -19,6 +19,7 @@ type ReportPayload = {
   metrics: Metric[];
   notes: string[];
   layers: Layer[];
+  template: "corridor" | "ss4a";
   localSummary?: {
     boundaryType?: string;
     bbox?: { minX: number; minY: number; maxX: number; maxY: number } | null;
@@ -50,7 +51,9 @@ export default function ReportPage() {
       <div className="mx-auto max-w-3xl space-y-8">
         <header className="space-y-2 border-b border-neutral-200 pb-4">
           <p className="text-xs uppercase tracking-[0.35em] text-neutral-500">Rural Atlas</p>
-          <h1 className="text-3xl font-semibold">FHWA-Ready Corridor Brief</h1>
+          <h1 className="text-3xl font-semibold">
+            {payload.template === "ss4a" ? "SS4A Grant Safety Brief" : "FHWA-Ready Corridor Brief"}
+          </h1>
           <p className="text-sm text-neutral-500">
             Generated {new Date(payload.generatedAt).toLocaleString()}
           </p>
@@ -66,11 +69,18 @@ export default function ReportPage() {
 
         <section className="space-y-3">
           <h2 className="text-xl font-semibold">Executive Summary</h2>
-          <p className="text-sm text-neutral-700">
-            This corridor analysis summarizes safety, access, and equity indicators for rural
-            decision-makers. The findings below are intended for rapid scoping and grant-ready
-            documentation.
-          </p>
+          {payload.template === "ss4a" ? (
+            <p className="text-sm text-neutral-700">
+              This safety-focused brief summarizes high-injury network indicators, crash clusters,
+              and equity considerations to support SS4A grant applications and action planning.
+            </p>
+          ) : (
+            <p className="text-sm text-neutral-700">
+              This corridor analysis summarizes safety, access, and equity indicators for rural
+              decision-makers. The findings below are intended for rapid scoping and grant-ready
+              documentation.
+            </p>
+          )}
           <p className="text-sm text-neutral-700">
             Query: <span className="font-semibold">{payload.query}</span>
           </p>
@@ -99,6 +109,23 @@ export default function ReportPage() {
             )}
           </div>
         </section>
+
+        {payload.template === "ss4a" ? (
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold">SS4A Narrative</h2>
+            <div className="space-y-2 text-sm text-neutral-700">
+              <p>
+                This corridor demonstrates documented crash risk and proximity to vulnerable
+                populations. The proposed countermeasures align with safe system principles and
+                support Vision Zero goals.
+              </p>
+              <p>
+                Priority strategies include speed management, protected crossings, and corridor
+                treatments targeted to high-risk segments identified in the analysis.
+              </p>
+            </div>
+          </section>
+        ) : null}
 
         <section className="space-y-3">
           <h2 className="text-xl font-semibold">Active Data Layers</h2>

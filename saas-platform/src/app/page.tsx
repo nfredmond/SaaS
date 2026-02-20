@@ -51,6 +51,7 @@ type ReportPayload = {
   notes: string[];
   layers: Layer[];
   localSummary: ApiResponse["localSummary"];
+  template: "corridor" | "ss4a";
 };
 
 const PRESETS = [
@@ -102,6 +103,7 @@ export default function Home() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle");
   const [reportStatus, setReportStatus] = useState<"idle" | "ready">("idle");
+  const [reportTemplate, setReportTemplate] = useState<"corridor" | "ss4a">("corridor");
 
   const jobsMetric = metrics.find((metric) => metric.name === "jobs_30min");
   const hinMetric = metrics.find((metric) => metric.name === "hin_corridors");
@@ -228,6 +230,7 @@ export default function Home() {
     notes,
     layers,
     localSummary,
+    template: reportTemplate,
   });
 
   const handleShare = async () => {
@@ -648,6 +651,44 @@ export default function Home() {
                   High injury network segments align with crash clusters near the school corridor.
                   Recommend speed management and visibility upgrades.
                 </p>
+              </div>
+            </div>
+            <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-950/80 p-4 text-sm text-neutral-300">
+              <p className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">Report Template</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {[
+                  {
+                    key: "corridor",
+                    title: "Corridor Brief",
+                    details: "General planning summary for rural agencies.",
+                  },
+                  {
+                    key: "ss4a",
+                    title: "SS4A Grant Brief",
+                    details: "Safety-focused framing aligned to SS4A.",
+                  },
+                ].map((template) => (
+                  <label
+                    key={template.key}
+                    className={`flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 transition ${
+                      reportTemplate === template.key
+                        ? "border-emerald-400/60 bg-emerald-400/10"
+                        : "border-neutral-800 hover:border-neutral-600"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="report-template"
+                      className="mt-1 accent-emerald-300"
+                      checked={reportTemplate === template.key}
+                      onChange={() => setReportTemplate(template.key as "corridor" | "ss4a")}
+                    />
+                    <span>
+                      <div className="font-semibold text-neutral-100">{template.title}</div>
+                      <div className="text-xs text-neutral-500">{template.details}</div>
+                    </span>
+                  </label>
+                ))}
               </div>
             </div>
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
