@@ -74,6 +74,8 @@ export default function Home() {
   );
   const [reportRedownloadId, setReportRedownloadId] = useState<string | null>(null);
   const [reportRedownloadError, setReportRedownloadError] = useState<string | null>(null);
+  const [reportDeleteId, setReportDeleteId] = useState<string | null>(null);
+  const [reportDeleteError, setReportDeleteError] = useState<string | null>(null);
 
   const jobsMetric = metrics.find((metric) => metric.name === "jobs_30min");
   const hinMetric = metrics.find((metric) => metric.name === "hin_corridors");
@@ -336,6 +338,30 @@ export default function Home() {
     }
   };
 
+  const handleDeleteReport = async (report: ReportRecord) => {
+    setReportDeleteError(null);
+    setReportDeleteId(report.id);
+
+    try {
+      const response = await fetch(`/api/reports?id=${encodeURIComponent(report.id)}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error ?? "Unable to delete report.");
+      }
+
+      const payload = await response.json();
+      setReportHistory((payload?.reports ?? []) as ReportRecord[]);
+    } catch (error) {
+      setReportDeleteError(error instanceof Error ? error.message : "Unable to delete report.");
+      setTimeout(() => setReportDeleteError(null), 2800);
+    } finally {
+      setReportDeleteId(null);
+    }
+  };
+
   return (
     <div className="min-h-screen text-neutral-50 app-shell">
       <header className="border-b border-neutral-800/80 bg-neutral-950/70 backdrop-blur">
@@ -511,6 +537,9 @@ export default function Home() {
               {reportRedownloadError ? (
                 <p className="text-xs text-rose-300">{reportRedownloadError}</p>
               ) : null}
+              {reportDeleteError ? (
+                <p className="text-xs text-rose-300">{reportDeleteError}</p>
+              ) : null}
               {isReportsLoading ? (
                 <p className="text-xs text-neutral-500">Loading reports...</p>
               ) : reportHistory.length === 0 ? (
@@ -531,13 +560,22 @@ export default function Home() {
                     </div>
                     <p className="mt-1 truncate font-semibold text-neutral-100">{report.fileName}</p>
                     <p className="text-xs text-neutral-500">{report.query}</p>
-                    <button
-                      className="mt-2 rounded-full border border-neutral-700 px-3 py-1 text-xs text-neutral-200 transition hover:border-neutral-500 disabled:opacity-70"
-                      onClick={() => handleRedownloadReport(report)}
-                      disabled={reportRedownloadId === report.id}
-                    >
-                      {reportRedownloadId === report.id ? "Rebuilding..." : "Re-download"}
-                    </button>
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        className="rounded-full border border-neutral-700 px-3 py-1 text-xs text-neutral-200 transition hover:border-neutral-500 disabled:opacity-70"
+                        onClick={() => handleRedownloadReport(report)}
+                        disabled={reportRedownloadId === report.id || reportDeleteId === report.id}
+                      >
+                        {reportRedownloadId === report.id ? "Rebuilding..." : "Re-download"}
+                      </button>
+                      <button
+                        className="rounded-full border border-rose-400/40 px-3 py-1 text-xs text-rose-200 transition hover:border-rose-300 disabled:opacity-70"
+                        onClick={() => handleDeleteReport(report)}
+                        disabled={reportDeleteId === report.id || reportRedownloadId === report.id}
+                      >
+                        {reportDeleteId === report.id ? "Deleting..." : "Delete"}
+                      </button>
+                    </div>
                   </div>
                 ))
               )}

@@ -39,3 +39,10 @@ export function getReportById(id: string): ReportRecord | null {
   const current = readReports();
   return current.find((report) => report.id === id) ?? null;
 }
+
+export function deleteReportById(id: string): ReportRecord[] {
+  const current = readReports();
+  const updated = current.filter((report) => report.id !== id);
+  fs.writeFileSync(REPORTS_PATH, JSON.stringify(updated, null, 2));
+  return updated;
+}
