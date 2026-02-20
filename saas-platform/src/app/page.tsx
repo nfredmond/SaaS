@@ -1,0 +1,485 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import MapView from "@/components/MapView";
+
+type Metric = {
+  name: string;
+  value: number;
+  unit: string;
+};
+
+type Layer = {
+  name: string;
+  type: string;
+};
+
+type ApiResponse = {
+  metrics: Metric[];
+  layers: Layer[];
+  notes?: string[];
+  localSummary?: {
+    boundaryType?: string;
+    bbox?: { minX: number; minY: number; maxX: number; maxY: number } | null;
+    centroid?: { lon: number; lat: number } | null;
+    generatedAt?: string;
+  } | null;
+  runId?: string;
+};
+
+type GeoJsonFeature = {
+  type: "Feature";
+  geometry: {
+    type: "Polygon" | "MultiPolygon";
+    coordinates: unknown;
+  };
+  properties?: Record<string, unknown>;
+};
+
+type RunEntry = {
+  id: string;
+  query: string;
+  createdAt: string;
+  metrics: Metric[];
+  notes?: string[];
+};
+
+const PRESETS = [
+  {
+    title: "Safety Hotspots",
+    query: "Show safety risks near the school corridor",
+    details: "Crash clusters + high injury corridors",
+  },
+  {
+    title: "Jobs Access",
+    query: "Where do we lose job access after the bypass?",
+    details: "30-minute access footprint",
+  },
+  {
+    title: "Equity Screen",
+    query: "Highlight equity gaps for low-income households",
+    details: "ACS overlays with population weight",
+  },
+];
+
+export default function Home() {
+  const [query, setQuery] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [analysisStatus, setAnalysisStatus] = useState<"idle" | "running" | "complete">("idle");
+  const [metrics, setMetrics] = useState<Metric[]>([
+    { name: "jobs_30min", value: 18240, unit: "jobs" },
+    { name: "hin_corridors", value: 3, unit: "count" },
+    { name: "equity_gap", value: 0.14, unit: "ratio" },
+  ]);
+  const [layers, setLayers] = useState<Layer[]>([
+    { name: "FARS 2022-2024", type: "points" },
+    { name: "LODES Jobs", type: "hex" },
+    { name: "ACS Demographics", type: "polygons" },
+  ]);
+  const [notes, setNotes] = useState<string[]>(["No boundary uploaded. Using demo extent."]);
+  const [localSummary, setLocalSummary] = useState<ApiResponse["localSummary"]>(null);
+  const [boundary, setBoundary] = useState<GeoJsonFeature | null>(null);
+  const [boundaryFile, setBoundaryFile] = useState<File | null>(null);
+  const [lastRunId, setLastRunId] = useState<string | null>(null);
+  const [lastRunAt, setLastRunAt] = useState<string | null>(null);
+  const [runHistory, setRunHistory] = useState<RunEntry[]>([]);
+  const [mapLayers, setMapLayers] = useState({
+    crashPoints: true,
+    jobHexes: true,
+    corridor: true,
+  });
+  const [hasHydrated, setHasHydrated] = useState(false);
+
+  const jobsMetric = metrics.find((metric) => metric.name === "jobs_30min");
+  const hinMetric = metrics.find((metric) => metric.name === "hin_corridors");
+  const equityMetric = metrics.find((metric) => metric.name === "equity_gap");
+
+  const insightLines = useMemo(() => {
+    const lines: string[] = [];
+
+    if (jobsMetric) {
+      lines.push(
+        `${jobsMetric.value.toLocaleString()} jobs reachable within 30 minutes from the corridor.`
+      );
+    }
+
+    if (hinMetric) {
+      lines.push(`${hinMetric.value} high-injury corridor segments flagged in the study area.`);
+    }
+
+    if (equityMetric) {
+      lines.push(`Equity gap index sits at ${Math.round(equityMetric.value * 100)}%.`);
+    }
+
+    return lines;
+  }, [jobsMetric, hinMetric, equityMetric]);
+
+  useEffect(() => {
+    if (hasHydrated) return;
+    if (typeof window === "undefined") return;
+
+    const stored = window.localStorage.getItem("rural-atlas-runs");
+    if (stored) {
+      const parsed = JSON.parse(stored) as RunEntry[];
+      setRunHistory(parsed);
+      if (parsed[0]) {
+        setLastRunId(parsed[0].id);
+        setLastRunAt(parsed[0].createdAt);
+      }
+    }
+
+    setHasHydrated(true);
+  }, [hasHydrated]);
+
+  useEffect(() => {
+    if (!hasHydrated) return;
+    window.localStorage.setItem("rural-atlas-runs", JSON.stringify(runHistory.slice(0, 12)));
+  }, [hasHydrated, runHistory]);
+
+  const handleBoundaryUpload = async (file: File | null) => {
+    setBoundaryFile(file);
+    if (!file) {
+      setBoundary(null);
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      setBoundary(json as GeoJsonFeature);
+      setNotes((prev) => [
+        `Loaded boundary file: ${file.name}`,
+        ...prev.filter((note) => !note.startsWith("Loaded boundary file")),
+      ]);
+    } catch (error) {
+      setBoundary(null);
+      setNotes(["Invalid GeoJSON file. Please upload a Feature with Polygon geometry."]);
+    }
+  };
+
+  const handleRunAnalysis = async () => {
+    setIsLoading(true);
+    setAnalysisStatus("running");
+    try {
+      const body: Record<string, unknown> = { query };
+
+      if (boundary) {
+        body.boundary = boundary;
+      }
+
+      const response = await fetch("/api/analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const data: ApiResponse = await response.json();
+      const runId = data.runId ?? crypto.randomUUID();
+      const runTime = new Date().toISOString();
+      const runNotes = data.notes ?? [];
+
+      setMetrics(data.metrics ?? []);
+      setLayers(data.layers ?? []);
+      setNotes(runNotes);
+      setLocalSummary(data.localSummary ?? null);
+      setLastRunId(runId);
+      setLastRunAt(runTime);
+      setRunHistory((prev) => [
+        {
+          id: runId,
+          query: query || "Untitled run",
+          createdAt: runTime,
+          metrics: data.metrics ?? [],
+          notes: runNotes,
+        },
+        ...prev,
+      ]);
+      setAnalysisStatus("complete");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen text-neutral-50 app-shell">
+      <header className="border-b border-neutral-800/80 bg-neutral-950/70 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-5">
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.35em] text-sky-200/70">Rural Atlas</p>
+            <h1 className="font-display text-2xl font-semibold text-white">
+              Corridor Intelligence Studio
+            </h1>
+            <p className="text-sm text-neutral-400">
+              Analytics-first planning workspace for rural agencies.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="rounded-full border border-neutral-700/70 bg-neutral-900/60 px-4 py-2 text-xs uppercase tracking-[0.2em] text-neutral-300">
+              Status: {analysisStatus}
+            </div>
+            <button className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-200 transition hover:border-neutral-500">
+              Export Report
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto grid w-full max-w-6xl grid-cols-1 gap-6 px-6 py-6 lg:grid-cols-[360px_1fr]">
+        <section className="space-y-6">
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Mission Control</p>
+            <div className="mt-4 space-y-3">
+              <input
+                className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-4 py-3 text-sm text-neutral-100 placeholder:text-neutral-500"
+                placeholder="Example: Show safety risks near the school corridor"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              <div className="grid gap-2">
+                {PRESETS.map((preset) => (
+                  <button
+                    key={preset.title}
+                    className="rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-3 text-left text-sm text-neutral-200 transition hover:border-neutral-600"
+                    onClick={() => setQuery(preset.query)}
+                  >
+                    <div className="font-semibold">{preset.title}</div>
+                    <div className="text-xs text-neutral-500">{preset.details}</div>
+                  </button>
+                ))}
+              </div>
+              <button
+                className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-neutral-900 disabled:opacity-70"
+                onClick={handleRunAnalysis}
+                disabled={isLoading}
+              >
+                {isLoading ? "Running..." : "Run Analysis"}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Corridor Boundary</p>
+            <div className="mt-3 space-y-2 text-sm text-neutral-300">
+              <input
+                type="file"
+                accept=".json,.geojson"
+                onChange={(event) => handleBoundaryUpload(event.target.files?.[0] ?? null)}
+              />
+              <p className="text-xs text-neutral-500">Upload a GeoJSON Feature with Polygon/MultiPolygon.</p>
+              {boundaryFile ? (
+                <p className="text-xs text-emerald-300">Loaded: {boundaryFile.name}</p>
+              ) : (
+                <p className="text-xs text-neutral-500">No file selected.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Key Metrics</p>
+            <div className="mt-4 space-y-3">
+              {metrics.map((metric) => (
+                <div
+                  key={metric.name}
+                  className="rounded-xl border border-neutral-800 bg-neutral-950 p-3"
+                >
+                  <p className="text-xs text-neutral-500">{metric.name}</p>
+                  <p className="text-2xl font-semibold">
+                    {metric.unit === "ratio"
+                      ? `${Math.round(metric.value * 100)}%`
+                      : metric.value.toLocaleString()}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Layer Switchboard</p>
+            <div className="mt-4 space-y-2 text-sm text-neutral-300">
+              {[
+                { key: "crashPoints", label: "Crash Points (FARS)" },
+                { key: "jobHexes", label: "Jobs Access Hexes" },
+                { key: "corridor", label: "Corridor Boundary" },
+              ].map((item) => (
+                <label key={item.key} className="flex items-center justify-between gap-3">
+                  <span>{item.label}</span>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-white"
+                    checked={mapLayers[item.key as keyof typeof mapLayers]}
+                    onChange={(event) =>
+                      setMapLayers((prev) => ({ ...prev, [item.key]: event.target.checked }))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Active Layers</p>
+            <div className="mt-4 space-y-2 text-sm text-neutral-300">
+              {layers.map((layer) => (
+                <div key={layer.name} className="flex items-center justify-between">
+                  <span>{layer.name}</span>
+                  <span className="text-xs text-neutral-500">{layer.type}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Run Notes</p>
+            <div className="mt-3 space-y-2 text-xs text-neutral-400">
+              {notes.map((note) => (
+                <p key={note}>{note}</p>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Run History</p>
+            <div className="mt-4 space-y-3 text-sm text-neutral-300">
+              {runHistory.length === 0 ? (
+                <p className="text-xs text-neutral-500">No runs yet.</p>
+              ) : (
+                runHistory.slice(0, 4).map((run) => (
+                  <div key={run.id} className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                    <p className="text-xs text-neutral-500">{new Date(run.createdAt).toLocaleString()}</p>
+                    <p className="font-semibold text-neutral-100">{run.query}</p>
+                    {run.notes?.[0] ? (
+                      <p className="text-xs text-neutral-500">{run.notes[0]}</p>
+                    ) : null}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <div className="rounded-3xl border border-neutral-800 bg-neutral-900/40 p-4 shadow-xl float-in">
+            <div className="flex flex-wrap items-center justify-between gap-4 px-2 pb-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Live Map</p>
+                <h2 className="font-display text-xl text-white">Corridor View</h2>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <button className="rounded-full border border-neutral-700 px-4 py-2 text-neutral-200 transition hover:border-neutral-500">
+                  Share Link
+                </button>
+                <button className="rounded-full bg-emerald-400/90 px-4 py-2 font-semibold text-neutral-900 transition hover:bg-emerald-300">
+                  Generate Brief
+                </button>
+              </div>
+            </div>
+            <div className="relative h-[560px] overflow-hidden rounded-2xl border border-neutral-800">
+              <MapView
+                boundary={boundary}
+                showBoundary={mapLayers.corridor}
+                showCrashPoints={mapLayers.crashPoints}
+                showJobHexes={mapLayers.jobHexes}
+              />
+              <div className="absolute bottom-4 left-4 space-y-2 rounded-2xl border border-neutral-800 bg-neutral-950/80 p-4 text-xs text-neutral-200 shadow-lg">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">Legend</p>
+                {mapLayers.crashPoints ? (
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-blue-400" />
+                    <span>Crash points</span>
+                  </div>
+                ) : null}
+                {mapLayers.jobHexes ? (
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-sm bg-rose-400" />
+                    <span>Jobs access hexes</span>
+                  </div>
+                ) : null}
+                {mapLayers.corridor ? (
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-sm bg-amber-200" />
+                    <span>Corridor boundary</span>
+                  </div>
+                ) : null}
+              </div>
+              <div className="absolute bottom-4 right-4 space-y-1 rounded-2xl border border-neutral-800 bg-neutral-950/80 p-4 text-xs text-neutral-200 shadow-lg">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">Last Run</p>
+                {lastRunId ? (
+                  <>
+                    <p>Run ID: {lastRunId.slice(0, 8)}</p>
+                    <p>{lastRunAt ? new Date(lastRunAt).toLocaleString() : "Timestamp pending"}</p>
+                  </>
+                ) : (
+                  <p>No analysis yet.</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+              <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Insights</p>
+              <div className="mt-3 space-y-2 text-sm text-neutral-300">
+                {insightLines.length === 0 ? (
+                  <p className="text-neutral-500">Run an analysis to generate insights.</p>
+                ) : (
+                  insightLines.map((line) => <p key={line}>{line}</p>)
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+              <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Local Ingest</p>
+              <div className="mt-3 space-y-2 text-xs text-neutral-400">
+                {localSummary ? (
+                  <>
+                    <p>Boundary: {localSummary.boundaryType ?? "unknown"}</p>
+                    {localSummary.bbox ? (
+                      <p>
+                        BBox: {localSummary.bbox.minX.toFixed(3)}, {localSummary.bbox.minY.toFixed(3)} →{" "}
+                        {localSummary.bbox.maxX.toFixed(3)}, {localSummary.bbox.maxY.toFixed(3)}
+                      </p>
+                    ) : null}
+                    {localSummary.centroid ? (
+                      <p>
+                        Centroid: {localSummary.centroid.lon.toFixed(3)}, {localSummary.centroid.lat.toFixed(3)}
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <p>No local ingest summary yet.</p>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Execution Timeline</p>
+            <div className="mt-3 space-y-2 text-sm text-neutral-300">
+              <div className="flex items-center justify-between">
+                <span>Boundary ingest</span>
+                <span className="text-xs text-neutral-500">
+                  {boundary ? "Complete" : "Pending"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>National dataset clip</span>
+                <span className="text-xs text-neutral-500">
+                  {analysisStatus === "complete" ? "Complete" : "Pending"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Analytics run</span>
+                <span className="text-xs text-neutral-500">{analysisStatus}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Report draft</span>
+                <span className="text-xs text-neutral-500">
+                  {analysisStatus === "complete" ? "Ready" : "Waiting"}
+                </span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
