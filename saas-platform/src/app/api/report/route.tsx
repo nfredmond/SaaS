@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { appendReport } from "@/lib/reportStore";
 import {
   Document,
   Page,
@@ -91,6 +92,9 @@ export async function POST(request: Request) {
   }
 
   const payload = parsed.data;
+  const reportId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const fileName = `rural-atlas-report-${createdAt.slice(0, 10)}.pdf`;
 
   const reportTitle =
     payload.template === "ss4a" ? "SS4A Grant Safety Brief" : "FHWA-Ready Corridor Brief";
@@ -182,12 +186,21 @@ export async function POST(request: Request) {
 
   const buffer = await renderToBuffer(pdf);
   const bytes = new Uint8Array(buffer);
+
+  appendReport({
+    id: reportId,
+    createdAt,
+    fileName,
+    template: payload.template,
+    query: payload.query,
+    metricCount: payload.metrics.length,
+    noteCount: payload.notes.length,
+  });
+
   return new NextResponse(bytes, {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="rural-atlas-report-${new Date()
-        .toISOString()
-        .slice(0, 10)}.pdf"`,
+      "Content-Disposition": `attachment; filename="${fileName}"`,
     },
   });
 }

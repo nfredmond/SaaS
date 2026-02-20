@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import MapView from "@/components/MapView";
-import type { AnalysisRun, Layer, Metric, ReportPayload } from "@/lib/reportSchema";
+import type { AnalysisRun, Layer, Metric, ReportPayload, ReportRecord } from "@/lib/reportSchema";
 import type { Feature, GeoJsonProperties, MultiPolygon, Polygon } from "geojson";
 
 type ApiResponse = {
@@ -56,12 +56,14 @@ export default function Home() {
   const [lastRunId, setLastRunId] = useState<string | null>(null);
   const [lastRunAt, setLastRunAt] = useState<string | null>(null);
   const [runHistory, setRunHistory] = useState<RunEntry[]>([]);
+  const [reportHistory, setReportHistory] = useState<ReportRecord[]>([]);
   const [mapLayers, setMapLayers] = useState({
     crashPoints: true,
     jobHexes: true,
     corridor: true,
   });
   const [isRunsLoading, setIsRunsLoading] = useState(true);
+  const [isReportsLoading, setIsReportsLoading] = useState(true);
   const [showReport, setShowReport] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle");
@@ -122,6 +124,28 @@ export default function Home() {
     }
 
     loadRuns();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadReports() {
+      setIsReportsLoading(true);
+      try {
+        const response = await fetch("/api/reports", { cache: "no-store" });
+        const payload = await response.json();
+        const reports = (payload?.reports ?? []) as ReportRecord[];
+        if (!active) return;
+        setReportHistory(reports);
+      } finally {
+        if (active) setIsReportsLoading(false);
+      }
+    }
+
+    loadReports();
     return () => {
       active = false;
     };
@@ -247,10 +271,39 @@ export default function Home() {
       link.remove();
       window.URL.revokeObjectURL(url);
       setReportDownloadStatus("idle");
+
+      const reportsResponse = await fetch("/api/reports", { cache: "no-store" });
+      const reportsPayload = await reportsResponse.json();
+      setReportHistory((reportsPayload?.reports ?? []) as ReportRecord[]);
     } catch {
       setReportDownloadStatus("error");
       setTimeout(() => setReportDownloadStatus("idle"), 2500);
     }
+  };
+
+  const handleDeleteSelectedRun = async () => {
+    if (!selectedRunId) return;
+
+    const response = await fetch(`/api/runs?id=${encodeURIComponent(selectedRunId)}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) return;
+
+    const payload = await response.json();
+    const runs = (payload?.runs ?? []) as RunEntry[];
+    setRunHistory(runs);
+
+    if (runs[0]) {
+      setSelectedRunId(runs[0].id);
+      setLastRunId(runs[0].id);
+      setLastRunAt(runs[0].createdAt);
+      return;
+    }
+
+    setSelectedRunId(null);
+    setLastRunId(null);
+    setLastRunAt(null);
   };
 
   return (
@@ -421,6 +474,35 @@ export default function Home() {
               )}
             </div>
           </div>
+
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 float-in">
+            <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Recent Reports</p>
+            <div className="mt-4 space-y-3 text-sm text-neutral-300">
+              {isReportsLoading ? (
+                <p className="text-xs text-neutral-500">Loading reports...</p>
+              ) : reportHistory.length === 0 ? (
+                <p className="text-xs text-neutral-500">No reports generated yet.</p>
+              ) : (
+                reportHistory.slice(0, 4).map((report) => (
+                  <div
+                    key={report.id}
+                    className="rounded-xl border border-neutral-800 bg-neutral-950 p-3"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs text-neutral-500">
+                        {new Date(report.createdAt).toLocaleString()}
+                      </p>
+                      <span className="rounded-full border border-neutral-700 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-neutral-400">
+                        {report.template}
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate font-semibold text-neutral-100">{report.fileName}</p>
+                    <p className="text-xs text-neutral-500">{report.query}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </section>
 
         <section className="space-y-4">
@@ -561,12 +643,20 @@ export default function Home() {
             <p className="text-xs uppercase tracking-[0.25em] text-neutral-500">Selected Run</p>
             {selectedRun ? (
               <div className="mt-3 space-y-3 text-sm text-neutral-300">
-                <div>
-                  <p className="text-xs text-neutral-500">Query</p>
-                  <p className="font-semibold text-neutral-100">{selectedRun.query}</p>
-                  <p className="text-xs text-neutral-500">
-                    {new Date(selectedRun.createdAt).toLocaleString()}
-                  </p>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-neutral-500">Query</p>
+                    <p className="font-semibold text-neutral-100">{selectedRun.query}</p>
+                    <p className="text-xs text-neutral-500">
+                      {new Date(selectedRun.createdAt).toLocaleString()}
+                    </p>
+                  </div>
+                  <button
+                    className="rounded-full border border-rose-400/40 px-3 py-1 text-xs text-rose-200 transition hover:border-rose-300"
+                    onClick={handleDeleteSelectedRun}
+                  >
+                    Delete
+                  </button>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3">
                   {selectedRun.metrics.map((metric) => (

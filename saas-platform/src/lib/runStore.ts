@@ -34,3 +34,10 @@ export function appendRun(run: AnalysisRun): AnalysisRun[] {
   fs.writeFileSync(RUNS_PATH, JSON.stringify(updated, null, 2));
   return updated;
 }
+
+export function deleteRunById(id: string): AnalysisRun[] {
+  const current = readRuns();
+  const updated = current.filter((run) => run.id !== id);
+  fs.writeFileSync(RUNS_PATH, JSON.stringify(updated, null, 2));
+  return updated;
+}

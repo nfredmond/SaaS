@@ -24,6 +24,16 @@ export type ReportPayload = {
   template: "corridor" | "ss4a";
 };
 
+export type ReportRecord = {
+  id: string;
+  createdAt: string;
+  fileName: string;
+  template: ReportPayload["template"];
+  query: string;
+  metricCount: number;
+  noteCount: number;
+};
+
 export type AnalysisRun = {
   id: string;
   query: string;
