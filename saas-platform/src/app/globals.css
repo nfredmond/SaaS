@@ -50,3 +50,18 @@ body {
 .float-in {
   animation: floatIn 420ms ease-out both;
 }
+
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #0a0a0a !important;
+  }
+
+  .app-shell {
+    background: #ffffff !important;
+  }
+
+  .print\\:hidden {
+    display: none !important;
+  }
+}

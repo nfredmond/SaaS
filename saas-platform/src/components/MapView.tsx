@@ -165,7 +165,7 @@ export default function MapView({
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
     map.addControl(new maplibregl.ScaleControl(), "bottom-left");
 
-    const overlay = new MapboxOverlay({ layers });
+    const overlay = new MapboxOverlay({ layers: [] });
 
     map.addControl(overlay as unknown as maplibregl.IControl);
 

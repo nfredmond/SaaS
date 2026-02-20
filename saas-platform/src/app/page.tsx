@@ -44,6 +44,15 @@ type RunEntry = {
   notes?: string[];
 };
 
+type ReportPayload = {
+  generatedAt: string;
+  query: string;
+  metrics: Metric[];
+  notes: string[];
+  layers: Layer[];
+  localSummary: ApiResponse["localSummary"];
+};
+
 const PRESETS = [
   {
     title: "Safety Hotspots",
@@ -92,6 +101,7 @@ export default function Home() {
   const [showReport, setShowReport] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle");
+  const [reportStatus, setReportStatus] = useState<"idle" | "ready">("idle");
 
   const jobsMetric = metrics.find((metric) => metric.name === "jobs_30min");
   const hinMetric = metrics.find((metric) => metric.name === "hin_corridors");
@@ -204,11 +214,21 @@ export default function Home() {
         ...prev,
       ]);
       setSelectedRunId(runId);
+      setReportStatus("ready");
       setAnalysisStatus("complete");
     } finally {
       setIsLoading(false);
     }
   };
+
+  const buildReportPayload = (): ReportPayload => ({
+    generatedAt: new Date().toISOString(),
+    query: query || "Untitled run",
+    metrics,
+    notes,
+    layers,
+    localSummary,
+  });
 
   const handleShare = async () => {
     try {
@@ -220,6 +240,13 @@ export default function Home() {
       setShareStatus("error");
       setTimeout(() => setShareStatus("idle"), 2000);
     }
+  };
+
+  const handleDownloadReport = () => {
+    if (typeof window === "undefined") return;
+    const payload = buildReportPayload();
+    window.localStorage.setItem("rural-atlas-report", JSON.stringify(payload));
+    window.open("/report", "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -243,7 +270,7 @@ export default function Home() {
               className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-200 transition hover:border-neutral-500"
               onClick={() => setShowReport(true)}
             >
-              Export Report
+              {reportStatus === "ready" ? "Export Report" : "Draft Report"}
             </button>
           </div>
         </div>
@@ -627,8 +654,11 @@ export default function Home() {
               <div className="text-xs text-neutral-500">
                 Data sources: ACS 5-year, LODES, FARS, local boundary uploads.
               </div>
-              <button className="rounded-full bg-emerald-400/90 px-4 py-2 text-sm font-semibold text-neutral-900">
-                Download PDF (placeholder)
+              <button
+                className="rounded-full bg-emerald-400/90 px-4 py-2 text-sm font-semibold text-neutral-900"
+                onClick={handleDownloadReport}
+              >
+                Download PDF
               </button>
             </div>
           </div>
