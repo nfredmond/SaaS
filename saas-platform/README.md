@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Rural Atlas SaaS Platform
 
-## Getting Started
+Analytics-first planning workspace for rural agencies. This app turns corridor questions into metrics, map layers, and exportable PDF briefs.
 
-First, run the development server:
+## Local Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+App URL: `http://localhost:3000`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Quality Checks
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run lint
+npm run build
+```
 
-## Learn More
+## Core Features
 
-To learn more about Next.js, take a look at the following resources:
+- Run corridor analysis from a plain-language query.
+- Upload a local GeoJSON corridor boundary.
+- Persist analysis run history and report history in `data/derived`.
+- Search/filter run and report history, with incremental load.
+- Re-download generated reports from persisted payload snapshots.
+- Export and restore backups (replace or merge mode).
+- Restore flow validates payload shape and deduplicates by `id`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Storage Model
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Runs: `data/derived/runs.json`
+- Reports: `data/derived/reports.json`
+- Local ingest summary (if available): `data/derived/summary.json`
 
-## Deploy on Vercel
+## API Surface
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `POST /api/analysis`
+- `GET /api/runs?q=&limit=`
+- `DELETE /api/runs?id=`
+- `DELETE /api/runs?all=true`
+- `POST /api/report`
+- `GET /api/reports?q=&template=&limit=`
+- `DELETE /api/reports?id=`
+- `DELETE /api/reports?all=true`
+- `GET /api/reports/[id]/download`
+- `GET /api/backup`
+- `POST /api/restore`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Notes
+
+- Current backup payload includes `schemaVersion: 1`.
+- History stores are capped at 50 records each.
